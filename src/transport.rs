@@ -1,17 +1,23 @@
 //! Test primitives for transports.
 //!
 
-
+extern crate byteorder;
 use std::thread;
 use std::sync::mpsc;
 use mydht_base::transport::{Transport,Address,ReaderHandle};
 //use mydht_base::transport::{SpawnRecMode};
 //use std::io::Result as IoResult;
 //use mydht_base::mydhtresult::Result;
-use std::io::Read;
-use std::io::Write;
+use std::io::{
+  Write,
+  Read,
+  Error as IoError,
+  Result as IoResult,
+};
 use time::Duration;
 use std::sync::Arc;
+use mydht_base::mydhtresult::Result;
+use self::byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 pub fn connect_rw_with_optional<A : Address, T : Transport<Address=A>> (t1 : T, t2 : T, a1 : &A, a2 : &A, with_optional : bool)
 {
@@ -262,6 +268,19 @@ pub fn connect_rw_with_optional_non_managed<A : Address, T : Transport<Address=A
 /// for testing purpose
 #[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Eq,Clone)]
 pub struct LocalAdd (pub usize);
-impl Address for LocalAdd{}
+
+impl Address for LocalAdd {
+  /*fn write_as_bytes<W:Write> (&self, w : &mut W) -> IoResult<()> {
+    let fsize = self.0 as u64; 
+    try!(w.write_u64::<LittleEndian>(fsize));
+    Ok(())
+  }
+  fn read_as_bytes<R:Read> (r : &mut R) -> IoResult<Self> {
+
+    let fsize = try!(r.read_u64::<LittleEndian>());
+    Ok(LocalAdd(fsize as usize))
+  }*/
+ 
+}
 
 

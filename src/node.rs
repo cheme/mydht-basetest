@@ -5,7 +5,7 @@ use peer::NoShadow;
 use std::string::String;
 use keyval::{KeyVal};
 use keyval::{Attachment,SettableAttachment};
-use utils::SocketAddrExt;
+use mydht_base::transport::SerSocketAddr;
 use mydht_base::route::byte_rep::DHTElemBytes;
 
 
@@ -14,7 +14,7 @@ use mydht_base::route::byte_rep::DHTElemBytes;
 #[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Eq,Clone)]
 pub struct Node {
   pub nodeid  : NodeID,
-  pub address : SocketAddrExt,
+  pub address : SerSocketAddr,
 }
 
 pub type NodeID = String;
@@ -36,9 +36,9 @@ impl KeyVal for Node {
 impl SettableAttachment for Node { }
 
 impl Peer for Node {
-  type Address = SocketAddr;
-  fn to_address(&self) -> SocketAddr {
-    self.address.0
+  type Address = SerSocketAddr;
+  fn to_address(&self) -> SerSocketAddr {
+    self.address.clone()
   }
   noshadow!();
 }

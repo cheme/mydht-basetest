@@ -4,9 +4,17 @@ use keyval::{KeyVal};
 use keyval::{Attachment,SettableAttachment};
 //use utils;
 use transport::LocalAdd;
- use mydht_base::route::byte_rep::{
+use mydht_base::route::byte_rep::{
     DHTElemBytes,
   };
+use shadow::{
+  ShadowTest,
+};
+#[cfg(test)]
+use shadow::{
+  ShadowModeTest,
+  shadower_test,
+};
 
 
 // reexport
@@ -17,6 +25,7 @@ pub use mydht_base::peer::*;
 pub struct PeerTest {
   pub nodeid  : String,
   pub address : LocalAdd,
+  pub keyshift : u8,
 }
 
 impl KeyVal for PeerTest {
@@ -37,10 +46,15 @@ impl SettableAttachment for PeerTest { }
 
 impl Peer for PeerTest {
   type Address = LocalAdd;
+  type Shadow = ShadowTest;
   fn to_address(&self) -> Self::Address {
     self.address.clone()
   }
-  noshadow!();
+  #[inline]
+  fn get_shadower (&self, _ : bool) -> Self::Shadow {
+    ShadowTest(self.keyshift,0)
+  }
+
 }
 
 impl<'a> DHTElemBytes<'a> for PeerTest {
@@ -56,4 +70,54 @@ impl<'a> DHTElemBytes<'a> for PeerTest {
     }
 }
 
+
+#[cfg(test)]
+fn peertest_shadower_test (input_length : usize, write_buffer_length : usize,
+read_buffer_length : usize, smode : ShadowModeTest) {
+
+/*  let fromP = PeerTest {
+    nodeid: "fromid".to_string(),
+    address : LocalAdd(0),
+    keyshift: 1,
+  };*/
+  let to_p = PeerTest {
+    nodeid: "toid".to_string(),
+    address : LocalAdd(1),
+    keyshift: 2,
+  };
+ 
+  shadower_test(to_p,input_length,write_buffer_length,read_buffer_length,smode);
+
+}
+
+
+
+
+
+#[test]
+fn shadower1_test () {
+  let smode = ShadowModeTest::NoShadow;
+  let input_length = 256;
+  let write_buffer_length = 256;
+  let read_buffer_length = 256;
+  peertest_shadower_test (input_length, write_buffer_length, read_buffer_length, smode);
+}
+
+#[test]
+fn shadower2_test () {
+  let smode = ShadowModeTest::SimpleShiftNoHead;
+  let input_length = 20;
+  let write_buffer_length = 15;
+  let read_buffer_length = 25;
+  peertest_shadower_test (input_length, write_buffer_length, read_buffer_length, smode);
+}
+
+#[test]
+fn shadower3_test () {
+  let smode = ShadowModeTest::SimpleShift;
+  let input_length = 123;
+  let write_buffer_length = 14;
+  let read_buffer_length = 17;
+  peertest_shadower_test (input_length, write_buffer_length, read_buffer_length, smode);
+}
 
