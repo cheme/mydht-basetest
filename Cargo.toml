@@ -24,8 +24,8 @@ byteorder = "0.3.13"
 
 
 [dependencies.mydht-base]
-path = "../mydht-base/"
-#git = "https://github.com/cheme/mydht-base.git"
+#path = "../mydht-base/"
+git = "https://github.com/cheme/mydht-base.git"
 
 
 [dependencies.bit-vec]
