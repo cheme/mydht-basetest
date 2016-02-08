@@ -6,6 +6,7 @@ extern crate rustc_serialize;
 #[macro_use] extern crate mydht_base;
 extern crate time;
 extern crate rand;
+extern crate readwrite_comp;
 pub mod node;
 mod utils {
   pub use mydht_base::utils::*;

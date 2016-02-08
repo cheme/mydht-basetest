@@ -1,7 +1,7 @@
 use std::net::{SocketAddr};
 use rustc_serialize::{Encoder,Encodable,Decoder};
 use peer::Peer;
-use peer::NoShadow;
+use peer::{Shadow,NoShadow};
 use std::string::String;
 use keyval::{KeyVal};
 use keyval::{Attachment,SettableAttachment};

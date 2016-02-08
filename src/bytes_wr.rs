@@ -2,7 +2,10 @@
 
 
 use mydht_base::bytes_wr::{
-  BytesWR,
+ BytesR,
+ BytesW,
+ new_bytes_w,
+ new_bytes_r,
 };
 use std::io::{
   Write,
@@ -20,27 +23,37 @@ use mydht_base::bytes_wr::sized_windows::{
   SizedWindowsParams,
 };
 
+use readwrite_comp::{
+  ExtRead,
+  ExtWrite,
+};
 
 
 #[test]
 fn escape_test () {
   let mut et = EscapeTerm::new(0);
+  let mut et2 = EscapeTerm::new(0);
   test_bytes_wr(
     150,
     7,
     &mut et,
+    &mut et2,
   ).unwrap();
   let mut et = EscapeTerm::new(1);
+  let mut et2 = EscapeTerm::new(1);
   test_bytes_wr(
     150,
     15,
     &mut et,
+    &mut et2,
   ).unwrap();
   let mut et = EscapeTerm::new(3);
+  let mut et2 = EscapeTerm::new(3);
   test_bytes_wr(
     150,
     200,
     &mut et,
+    &mut et2,
   ).unwrap();
 }
 
@@ -75,75 +88,85 @@ impl SizedWindowsParams for Params4 {
 #[test]
 fn windows_test () {
   let mut et = SizedWindows::new(Params2);
+  let mut et2 = SizedWindows::new(Params2);
   test_bytes_wr(
     150,
     15,
     &mut et,
+    &mut et2,
   ).unwrap();
   test_bytes_wr(
     150,
     36,
     &mut et,
+    &mut et2,
   ).unwrap();
 
   let mut et = SizedWindows::new(Params1);
+  let mut et2 = SizedWindows::new(Params1);
   test_bytes_wr(
     150,
     7,
     &mut et,
+    &mut et2,
   ).unwrap();
 
   let mut et = SizedWindows::new(Params2);
+  let mut et2 = SizedWindows::new(Params2);
   test_bytes_wr(
     150,
     15,
     &mut et,
+    &mut et2,
   ).unwrap();
   let mut et = SizedWindows::new(Params3);
+  let mut et2 = SizedWindows::new(Params3);
   test_bytes_wr(
     150,
     200,
     &mut et,
+    &mut et2,
   ).unwrap();
   let mut et = SizedWindows::new(Params4);
+  let mut et2 = SizedWindows::new(Params4);
   test_bytes_wr(
     150,
     7,
     &mut et,
+    &mut et2,
   ).unwrap();
 }
 
+// TODO test with known length from readext!!!
 
-
-pub fn test_bytes_wr<
-BWR : BytesWR<
-  Cursor<Vec<u8>>,
-  Cursor<Vec<u8>>
->> (inp_length : usize, buf_length : usize, bwr : &mut BWR) -> Result<()> {
+pub fn test_bytes_wr<BW : ExtWrite, BR : ExtRead> 
+  (inp_length : usize, buf_length : usize, bw : &mut BW, br : &mut BR) -> Result<()> {
   let mut rng = OsRng::new().unwrap();
   let mut outputb = Cursor::new(Vec::new());
   let mut reference = Cursor::new(Vec::new());
   let output = &mut outputb;
   let mut bufb = vec![0;buf_length];
+  let mut has_started = false;
   let buf = &mut bufb;
   // knwoledge of size to write
   let mut i = 0;
   while inp_length > i {
     rng.fill_bytes(buf);
-    if !bwr.has_started() {
-      try!(bwr.start_write(output));
+    if !has_started {
+      try!(bw.write_header(output));
+      has_started = true;
     };
     let ww = if inp_length - i < buf.len() {
       try!(reference.write(&buf[..inp_length - i]));
-      try!(bwr.b_write(output,&buf[..inp_length - i])) 
+      try!(bw.write_into(output,&buf[..inp_length - i])) 
     } else {
       try!(reference.write(buf));
-      try!(bwr.b_write(output,buf))
+      try!(bw.write_into(output,buf))
     };
     assert!(ww != 0);
     i += ww;
   }
-  try!(bwr.end_write(output));
+  try!(bw.write_end(output));
   // write next content
   rng.fill_bytes(buf);
   let endcontent = buf[0];
@@ -155,10 +178,15 @@ println!("Written lenght : {}", output.get_ref().len());
   // no knowledge of size to read
   output.set_position(0);
   let input = output;
+  has_started = false;
   let mut rr = 1;
   i = 0;
   while rr != 0 {
-    rr = try!(bwr.b_read(input,buf));
+    if !has_started {
+      try!(br.read_header(input));
+      has_started = true;
+    }
+    rr = try!(br.read_from(input,buf));
     // it could go over reference as no knowledge (if padding)
     // inp length is here only to content assertion
     println!("i {} rr {} inpl {}",i,rr,inp_length);
@@ -175,8 +203,8 @@ println!("Written lenght : {}", output.get_ref().len());
     }
     i += rr;
   }
-println!("C");
-  try!(bwr.end_read(input));
+println!(" C {} - {}",i,inp_length);
+  try!(br.read_end(input));
   assert!(i >= inp_length);
 println!("D");
   let ni = try!(input.read(buf));

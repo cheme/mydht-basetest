@@ -10,7 +10,7 @@ use mydht_base::route::byte_rep::{
 use shadow::{
   ShadowTest,
 };
-#[cfg(test)]
+
 use shadow::{
   ShadowModeTest,
   shadower_test,
@@ -52,7 +52,16 @@ impl Peer for PeerTest {
   }
   #[inline]
   fn get_shadower (&self, _ : bool) -> Self::Shadow {
-    ShadowTest(self.keyshift,0)
+    ShadowTest(self.keyshift,0,ShadowModeTest::NoShadow) // default to no shadow
+  }
+  fn default_auth_mode(&self) -> <Self::Shadow as Shadow>::ShadowMode {
+    ShadowModeTest::NoShadow
+  }
+  fn default_message_mode(&self) -> <Self::Shadow as Shadow>::ShadowMode {
+    ShadowModeTest::SimpleShift
+  }
+  fn default_header_mode(&self) -> <Self::Shadow as Shadow>::ShadowMode {
+    ShadowModeTest::SimpleShiftNoHead
   }
 
 }
@@ -89,10 +98,6 @@ read_buffer_length : usize, smode : ShadowModeTest) {
   shadower_test(to_p,input_length,write_buffer_length,read_buffer_length,smode);
 
 }
-
-
-
-
 
 #[test]
 fn shadower1_test () {

@@ -3,7 +3,7 @@
 //! TODO seems pretty useless : remove??
 use keyval::KeyVal;
 use node::{Node,NodeID};
-use peer::Peer;
+use peer::{Peer,Shadow};
 use std::cmp::Eq;
 use std::cmp::PartialEq;
 
@@ -51,5 +51,16 @@ impl KeyVal for NodeK2 {
     fn get_shadower (&self, write : bool) -> Self::Shadow {
       self.0.get_shadower(write)
     }
+    fn default_auth_mode(&self) -> <Self::Shadow as Shadow>::ShadowMode {
+     self.0.default_auth_mode() 
+    }
+    fn default_message_mode(&self) -> <Self::Shadow as Shadow>::ShadowMode {
+       self.0.default_message_mode() 
+    }
+    fn default_header_mode(&self) -> <Self::Shadow as Shadow>::ShadowMode {
+       self.0.default_header_mode() 
+    }
+
+
   }
 
