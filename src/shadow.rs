@@ -100,6 +100,8 @@ impl ExtWrite for ShadowTest {
         try!(w.write(&[0]));
       },
       ShadowModeTest::SimpleShift => {
+        self.1 = (self.shadow_simkey())[0];
+        println!("OKKKKKKKKKHead {}", self.1);
         try!(w.write(&[1,shift_up(self.1,self.0)]));
       },
       ShadowModeTest::SimpleShiftNoHead => {
@@ -113,7 +115,10 @@ impl ExtWrite for ShadowTest {
   fn write_into<W : Write>(&mut self, w : &mut W, cont : &[u8]) -> IoResult<usize> {
     let k = match self.2 {
       ShadowModeTest::NoShadow => Vec::new(),
-      ShadowModeTest::SimpleShift => vec!(self.1),
+      ShadowModeTest::SimpleShift => {
+        println!("OKKKKKKKKK {}", self.1);
+        vec!(self.1)
+      },
       ShadowModeTest::SimpleShiftNoHead => vec!(self.0),
     };
 
