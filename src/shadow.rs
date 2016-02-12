@@ -108,6 +108,7 @@ impl ExtWrite for ShadowTest {
         try!(w.write(&[2]));
       },
     }
+    println!("mode ciph : {:?} - {}",self.0, self.1);
     Ok(())
   }
 
@@ -137,6 +138,7 @@ impl ExtRead for ShadowTest {
     let nb = try!(r.read(buf));
     assert!(nb == 1);
     let sm : u8 = buf[0];
+    println!("read sm : {}",sm);
     let mode = if sm == 0 {
       ShadowModeTest::NoShadow
     }else if sm == 1 {
@@ -152,6 +154,7 @@ impl ExtRead for ShadowTest {
       panic!("wrong test shadow mode enc"); // TODO replace by err
     };
     self.2 = mode;
+    println!("mode ciph : {:?} - {}",self.0, self.1);
     Ok(())
   }
   #[inline]

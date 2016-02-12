@@ -17,7 +17,6 @@ use mydht_base::tunnel::{
   TunnelWriterExt,
   TunnelReader,
   TunnelReaderExt,
-  TunnelReaderExt2,
   TunnelMode,
   TunnelShadowMode,
   proxy_content,
@@ -51,12 +50,14 @@ impl SizedWindowsParams for TestSizedWindowsHead {
     const INIT_SIZE : usize = 15;
     const GROWTH_RATIO : Option<(usize,usize)> = None;
     const WRITE_SIZE : bool = false;
+    const SECURE_PAD : bool = false;
 }
 
 impl SizedWindowsParams for TestSizedWindows {
     const INIT_SIZE : usize = 45;
     const GROWTH_RATIO : Option<(usize,usize)> = Some((3,2));
-    const WRITE_SIZE : bool = false;
+    const WRITE_SIZE : bool = true;
+    const SECURE_PAD : bool = false;
 }
 
 pub fn tunnel_test<P : Peer> (route : Vec<P>, input_length : usize, write_buffer_length : usize,
@@ -122,23 +123,25 @@ println!("output : {:?}",&mut output);
 {
     let mut input_v = Cursor::new(output.into_inner());
 
-    let mut tunn_r = TunnelReaderExt::new(route.get(route_len - 1).unwrap(),SizedWindows::new(TestSizedWindows),None);
+    let mut tunn_r = TunnelReaderExt::new(route.get(i).unwrap(),SizedWindows::new(TestSizedWindows),None);
     //let mut tunn_r : TunnelReaderExt2<P,_> = TunnelReaderExt2::new(&mut input_v,&mut buf2[..],route.get(i).unwrap(),shead.clone(),scont.clone());
  
     assert!(tunn_r.is_dest() == None);
     tunn_r.read_header(&mut input_v).unwrap();
     assert!(tunn_r.is_dest() == Some(false));
 
-    println!("a hop not dest");
     output = Cursor::new(Vec::new());
 
     // proxy message test
-    proxy_content(&mut readbuf[..], &mut tunn_r, SizedWindows::new(TestSizedWindows), SizedWindows::new(TestSizedWindows), &mut input_v, &mut output).unwrap();
+    proxy_content(&mut readbuf[..], &mut tunn_r, 
+    SizedWindows::new(TestSizedWindows), 
+    SizedWindows::new(TestSizedWindows), 
+    SizedWindows::new(TestSizedWindows), &mut input_v, &mut output).unwrap();
  }
    output.flush().unwrap();
 
   }
-
+println!("dest!!");
   // read message test for dest
   {
     let mut ix = 0;
@@ -240,45 +243,32 @@ fn tunnel_nohop_publictunnel_3() {
   tunnel_public_test(2, TunnelShadowMode::Last, 500, 130, 360, ShadowModeTest::NoShadow, ShadowModeTest::NoShadow);
 }
 
+#[test]
+fn tunnel_onehop_publictunnel_1() {
+  tunnel_public_test(3, TunnelShadowMode::Last, 500, 360, 130, ShadowModeTest::SimpleShiftNoHead, ShadowModeTest::SimpleShift);
+}
+
 
 #[test]
 fn tunnel_onehop_publictunnel_2() {
   tunnel_public_test(3, TunnelShadowMode::Full, 500, 130, 360, ShadowModeTest::SimpleShift, ShadowModeTest::SimpleShift);
 }
 
-/* retest when layered ok
 #[test]
-fn tunnel_onehop_publictunnel_3() {
-  let tmode = TunnelMode::PublicTunnel(1, ShadowModeTest::NoShadow, ShadowModeTest::NoShadow);
-  let input_length = 500;
-  let write_buffer_length = 130;
-  let read_buffer_length = 360;
-  let mut route = Vec::new();
-  let pt = peer_tests();
-  route.push(pt[0].clone());
-  route.push(pt[1].clone());
-  route.push(pt[2].clone());
-  tunnel_test(route, input_length, write_buffer_length, read_buffer_length, tmode); 
-
+fn tunnel_onehop_publictunnel_3() { // TODO disable (useless)
+  tunnel_public_test(3, TunnelShadowMode::Last, 500, 130, 360, ShadowModeTest::NoShadow, ShadowModeTest::NoShadow);
 }
+
+#[test]
+fn tunnel_fourhop_publictunnel_2() {
+  tunnel_public_test(6, TunnelShadowMode::Full, 500, 130, 360, ShadowModeTest::SimpleShift, ShadowModeTest::SimpleShift);
+}
+
 #[test]
 fn tunnel_fourhop_publictunnel_3() {
-  let tmode = TunnelMode::PublicTunnel(1, ShadowModeTest::NoShadow, ShadowModeTest::NoShadow);
-  let input_length = 500;
-  let write_buffer_length = 130;
-  let read_buffer_length = 360;
-  let mut route = Vec::new();
-  let pt = peer_tests();
-  route.push(pt[0].clone());
-  route.push(pt[1].clone());
-  route.push(pt[2].clone());
-  route.push(pt[3].clone());
-  route.push(pt[4].clone());
-  route.push(pt[5].clone());
-  tunnel_test(route, input_length, write_buffer_length, read_buffer_length, tmode); 
-
+  tunnel_public_test(4, TunnelShadowMode::Last, 500, 130, 360, ShadowModeTest::NoShadow, ShadowModeTest::NoShadow);
 }
-*/
+
 
 
 fn peer_tests () -> Vec<PeerTest> {
