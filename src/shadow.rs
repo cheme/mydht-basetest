@@ -37,18 +37,7 @@ pub fn shift_down(init : u8, dec : u8) -> u8 {
   (Wrapping(init) - Wrapping(dec)).0
 }
 
-impl Shadow for ShadowTest {
-
-
-  type ShadowMode = ShadowModeTest;
-
-
-  fn set_mode (&mut self, sm : Self::ShadowMode) {
-    self.2 = sm
-  }
-  fn get_mode (&self) -> Self::ShadowMode {
-    self.2.clone()
-  }
+impl ShadowTest {
   #[inline]
   fn shadow_iter_sim<W : Write> (&mut self, k : &[u8], vals : &[u8], w : &mut W) -> IoResult<usize> {
     match self.2 {
@@ -83,13 +72,47 @@ impl Shadow for ShadowTest {
       },
     }
   }
-
-  fn shadow_simkey(&mut self) -> Vec<u8> {
+  fn shadow_simkey() -> Vec<u8> {
     let mut res = vec![0;1];
     thread_rng().fill_bytes(&mut res);
     res
   }
+
+
+}
+impl Shadow for ShadowTest {
+
+
+  type ShadowMode = ShadowModeTest;
+
+
+  fn set_mode (&mut self, sm : Self::ShadowMode) {
+    self.2 = sm
+  }
+  fn get_mode (&self) -> Self::ShadowMode {
+    self.2.clone()
+  }
+
+  fn send_shadow_simkey<W : Write>(w : &mut W, m : Self::ShadowMode ) -> IoResult<()> {
+    try!(w.write(&Self::shadow_simkey()[..]));
+    Ok(())
+  }
  
+  fn init_from_shadow_simkey<R : Read>(r : &mut R, m : Self::ShadowMode, write : bool) -> IoResult<Self> {
+    match m {
+      m@ShadowModeTest::NoShadow => {
+        Ok(ShadowTest(0,0,m))
+      }
+      m@ShadowModeTest::SimpleShift | m@ShadowModeTest::SimpleShiftNoHead => {
+        let mut b = [0];
+        try!(r.read(&mut b[..]));
+        Ok(ShadowTest(b[0],b[0],m))
+      }
+    }
+  }
+
+
+
 }
 impl ExtWrite for ShadowTest {
 
@@ -100,15 +123,13 @@ impl ExtWrite for ShadowTest {
         try!(w.write(&[0]));
       },
       ShadowModeTest::SimpleShift => {
-        self.1 = (self.shadow_simkey())[0];
-        println!("OKKKKKKKKKHead {}", self.1);
+        self.1 = (Self::shadow_simkey())[0];
         try!(w.write(&[1,shift_up(self.1,self.0)]));
       },
       ShadowModeTest::SimpleShiftNoHead => {
         try!(w.write(&[2]));
       },
     }
-    println!("mode ciph : {:?} - {}",self.0, self.1);
     Ok(())
   }
 
@@ -117,7 +138,6 @@ impl ExtWrite for ShadowTest {
     let k = match self.2 {
       ShadowModeTest::NoShadow => Vec::new(),
       ShadowModeTest::SimpleShift => {
-        println!("OKKKKKKKKK {}", self.1);
         vec!(self.1)
       },
       ShadowModeTest::SimpleShiftNoHead => vec!(self.0),
@@ -138,7 +158,6 @@ impl ExtRead for ShadowTest {
     let nb = try!(r.read(buf));
     assert!(nb == 1);
     let sm : u8 = buf[0];
-    println!("read sm : {}",sm);
     let mode = if sm == 0 {
       ShadowModeTest::NoShadow
     }else if sm == 1 {
@@ -154,7 +173,6 @@ impl ExtRead for ShadowTest {
       panic!("wrong test shadow mode enc"); // TODO replace by err
     };
     self.2 = mode;
-    println!("mode ciph : {:?} - {}",self.0, self.1);
     Ok(())
   }
   #[inline]
@@ -189,31 +207,42 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
 
   // sim test
   let mut ix = 0;
-  let k = from_shad.shadow_simkey();
+  let k = {
+    let mut wkey = Cursor::new(Vec::new());
+    <<P as Peer>::Shadow as Shadow>::send_shadow_simkey(&mut wkey, smode.clone()).unwrap();
+    wkey.into_inner()
+  };
+  let mut ki = Cursor::new(&k[..]);
+  let mut shad_sim_w =  <<P as Peer>::Shadow as Shadow>::init_from_shadow_simkey(&mut ki, smode.clone(),true).unwrap();
+  let mut ki = Cursor::new(&k[..]);
+  let mut shad_sim_r = <<P as Peer>::Shadow as Shadow>::init_from_shadow_simkey(&mut ki, smode.clone(),false).unwrap();
   while ix < input_length {
     if ix + write_buffer_length < input_length {
-      ix += from_shad.shadow_iter_sim(&k[..],&input[ix..ix + write_buffer_length], &mut output).unwrap();
+      ix += shad_sim_w.write_into(&mut output, &input[ix..ix + write_buffer_length]).unwrap();
     } else {
-      ix += from_shad.shadow_iter_sim(&k[..],&input[ix..], &mut output).unwrap();
+      ix += shad_sim_w.write_into(&mut output, &input[ix..]).unwrap();
     }
   }
-  from_shad.shadow_sim_flush(&mut output).unwrap();
+  let el = output.get_ref().len();
+  shad_sim_w.write_end(&mut output).unwrap();
+  shad_sim_w.flush_into(&mut output).unwrap();
+  output.flush().unwrap();
+  let el = output.get_ref().len();
   ix = 0;
   let mut readbuf = vec![0;read_buffer_length];
 
   let mut input_v = Cursor::new(output.into_inner());
   while ix < input_length {
-    let l = to_shad.read_shadow_iter_sim(&k[..],&mut input_v, &mut readbuf).unwrap();
+    let l = shad_sim_r.read_from(&mut input_v, &mut readbuf).unwrap();
     assert!(l!=0);
 
-    println!("{:?}",&input[ix..ix + l]);
-    println!("{:?}",&readbuf[..l]);
     assert!(&readbuf[..l] == &input[ix..ix + l]);
     ix += l;
   }
 
-  let l = to_shad.read_shadow_iter_sim(&k[..],&mut input_v, &mut readbuf).unwrap();
+  let l = shad_sim_r.read_from(&mut input_v, &mut readbuf).unwrap();
   assert!(l==0);
+  shad_sim_r.read_end(&mut input_v).unwrap();
 
 
 
@@ -229,6 +258,7 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
       ix += from_shad.shadow_iter(&input[ix..], &mut output).unwrap();
     }
   }
+  from_shad.write_end(&mut output).unwrap();
   from_shad.shadow_flush(&mut output).unwrap();
   output.flush();
 
@@ -245,8 +275,6 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
     let l = to_shad.read_shadow_iter(&mut input_v, &mut readbuf).unwrap();
     assert!(l!=0);
 
-    println!("{:?}",&input[ix..ix + l]);
-    println!("{:?}",&readbuf[..l]);
     assert!(&readbuf[..l] == &input[ix..ix + l]);
     ix += l;
   }

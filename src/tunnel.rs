@@ -99,7 +99,6 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
 
   }
 
-println!("output : {:?}",&mut output);
   // middle proxy message
   /*pub fn proxy_content<
   P : Peer,
@@ -116,10 +115,8 @@ println!("output : {:?}",&mut output);
     {*/
 
   for i in 1 .. route_len - 1 {
-    println!("a hop start");
     let mut readbuf = vec![0;read_buffer_length];
 
-    println!("a dest in :  : {:?}", output);
 {
     let mut input_v = Cursor::new(output.into_inner());
 
@@ -141,25 +138,22 @@ println!("output : {:?}",&mut output);
    output.flush().unwrap();
 
   }
-println!("dest!!");
   // read message test for dest
   {
     let mut ix = 0;
 
     
     let mut readbuf = vec![0;read_buffer_length];
-    println!("a dest in :  : {:?}", output);
     let mut input_v = Cursor::new(output.into_inner());
     let mut tunn_re = TunnelReaderExt::new(route.get(route_len - 1).unwrap(),SizedWindows::new(TestSizedWindows),None);
     let mut tunn_r = tunn_re.as_reader(&mut input_v);
-    assert!(tunn_r.1.is_dest() == None);
+    assert_eq!(tunn_r.1.is_dest(), None);
     let mut emptybuf = [];
-    tunn_r.read( &mut emptybuf[..]).unwrap();
-    assert!(tunn_r.1.is_dest() == Some(true));
+    assert_eq!(0,tunn_r.read( &mut emptybuf[..]).unwrap());
+    assert_eq!(tunn_r.1.is_dest(), Some(true));
 
 /*    let mut l = 1;
      while l != 0 {
-      println!("bfe read");
       l = tunn_r.read( &mut readbuf).unwrap();
 
       if ix < input.len() {
@@ -179,7 +173,7 @@ println!("dest!!");
       };
       assert!(l!=0);
 
-      assert!(&readbuf[..l] == &input[ix..ix + l]);
+      assert_eq!(&readbuf[..l], &input[ix..ix + l]);
       ix += l;
     }
 
