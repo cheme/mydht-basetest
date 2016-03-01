@@ -20,6 +20,7 @@ use mydht_base::tunnel::{
   TunnelMode,
   TunnelShadowMode,
   proxy_content,
+  ErrorHandlingMode,
 };
 
 use readwrite_comp::{
@@ -83,6 +84,7 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
       None,
       shead.clone(),
       scont.clone(),
+      None,// no specific reply route
     );
 
     let mut tunn_w = tunn_we.as_writer(&mut output);
@@ -213,7 +215,7 @@ fn tunnel_nohop_notunnel_2() {
 }
 
 fn tunnel_public_test(nbpeer : usize, tmode : TunnelShadowMode, input_length : usize, write_buffer_length : usize, read_buffer_length : usize, shead : ShadowModeTest, scont : ShadowModeTest) {
-  let tmode = TunnelMode::PublicTunnel((nbpeer as u8) - 1,tmode);
+  let tmode = TunnelMode::PublicTunnel((nbpeer as u8) - 1,tmode, ErrorHandlingMode::KnownDest(None));
   let mut route = Vec::new();
   let pt = peer_tests();
   for i in 0..nbpeer {

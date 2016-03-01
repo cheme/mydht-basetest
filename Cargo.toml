@@ -23,12 +23,12 @@ byteorder = "0.3.13"
 #vec_map = "0.3.0"
 
 [dependencies.readwrite-comp]
-path = "../readwrite-comp/"
-#git = "https://github.com/cheme/readwrite.git"
+#path = "../readwrite-comp/"
+git = "https://github.com/cheme/readwrite.git"
 
 [dependencies.mydht-base]
-path = "../mydht-base/"
-#git = "https://github.com/cheme/mydht-base.git"
+#path = "../mydht-base/"
+git = "https://github.com/cheme/mydht-base.git"
 
 
 [dependencies.bit-vec]

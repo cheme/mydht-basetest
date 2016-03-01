@@ -275,11 +275,11 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
     let l = to_shad.read_shadow_iter(&mut input_v, &mut readbuf).unwrap();
     assert!(l!=0);
 
-    assert!(&readbuf[..l] == &input[ix..ix + l]);
+    assert_eq!(&readbuf[..l], &input[ix..ix + l]);
     ix += l;
   }
 
   let l = to_shad.read_shadow_iter(&mut input_v, &mut readbuf).unwrap();
-  assert!(l==0);
+  assert_eq!(l,0);
 
 }
