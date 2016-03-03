@@ -24,7 +24,7 @@ byteorder = "0.3.13"
 
 [dependencies.readwrite-comp]
 #path = "../readwrite-comp/"
-git = "https://github.com/cheme/readwrite.git"
+git = "https://github.com/cheme/readwrite-comp.git"
 
 [dependencies.mydht-base]
 #path = "../mydht-base/"
