@@ -279,9 +279,15 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
     true,
   ).unwrap();
 
+
+  /*println!("err_p{}",err_p);
+  for i in &route[..] {
+    println!("erid: {}",i.0);
+  }*/
   // send back error id
  // let error_id = tunn_r.
- let mut output = Cursor::new(Vec::new());
+  let mut output = Cursor::new(Vec::new());
+  // report
   report_error(buf, 
                tunn_r,
   SizedWindows::new(TestSizedWindows), 
@@ -291,7 +297,6 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
   &mut output,
 //  w : &mut W, // w is for reply in reply route (error_read_dest has been called before)
   ).unwrap();
-
 
   // proxy it TODO factor code??
   for i in (1 .. err_p).rev() {
