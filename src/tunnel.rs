@@ -1,8 +1,10 @@
 use peer::{
   Peer,
   Shadow,
+  ShadowSim,
 };
 
+use std::collections::HashMap;
 use std::io::{
   Write,
   Read,
@@ -16,6 +18,8 @@ use mydht_base::tunnel::{
   self,
   TunnelWriter,
   TunnelWriterExt,
+  TunnelCachedWriterExt,
+  TunnelCachedReaderExt,
   TunnelReader,
   TunnelReaderExt,
   TunnelMode,
@@ -31,6 +35,7 @@ use mydht_base::tunnel::{
 use readwrite_comp::{
   ExtRead,
   ExtWrite,
+  CompW,
 };
 use peer::{
   PeerTest,
@@ -66,11 +71,20 @@ impl SizedWindowsParams for TestSizedWindows {
     const SECURE_PAD : bool = false;
 }
 
+/// for testing a limited cache is used
+pub struct CachedInfo<P : Peer> {
+
+  pub cached_key : Option<TunnelCachedWriterExt<SizedWindows<TestSizedWindows>,P>>,
+  pub prev_peer : Vec<u8>,
+
+}
+
 /// main tunnel test : send message over a route
 pub fn tunnel_test<P : Peer> (route : Vec<P>, tc : TunnelTestConfig<<<P as Peer>::Shadow as Shadow>::ShadowMode>)
 where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
 {
 
+ let mut cache : Vec<CachedInfo<P>>= Vec::new();
  let TunnelTestConfig {
      error_hop : error_hop,
      nbpeer : nbpeer,
@@ -80,7 +94,7 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
      read_buffer_length : read_buffer_length,
      shead : shead,
      scont : scont,
-     cache_ids : cache_ids,
+     cache_ids : mut cache_ids,
 } = tc.clone();
 
 
@@ -96,8 +110,8 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
     (errorid,p)
   }).collect();
   // send message test
-  {
-    let mut tunn_we = TunnelWriterExt::new(
+  let ocr = {
+    let (mut tunn_we, mut ocr) = TunnelWriterExt::new(
       &vec_route[..],
       SizedWindows::new(TestSizedWindows),
       tmode.clone(),
@@ -108,8 +122,8 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
       None,// no error routes
       None,// no specific reply route
       cache_ids[0].clone(),
-
-    );
+      Some(SizedWindows::new(TestSizedWindows)),// for cached reader
+    ).unwrap();
 
     let mut tunn_w = tunn_we.as_writer(&mut output);
     
@@ -123,8 +137,8 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
       }
     }
     tunn_w.flush().unwrap();
-
-  }
+    ocr
+  };
 
   // middle proxy message
   /*pub fn proxy_content<
@@ -158,13 +172,23 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
      assert_eq!(tunn_r.previous_cacheid, cache_ids[i-1]);
     }
 
-
     // error mgmt
     if i == error_hop {
       return tunnel_test_err (vec_route, tc, &mut tunn_r, &mut readbuf, &mut input_v, i)
     }
 
     output = Cursor::new(Vec::new());
+    if let TunnelMode::Tunnel(..) = tunn_r.mode {
+ 
+    if i == 1 {
+      let mut buf :Vec<u8> = Vec::new();
+      let mut cbuf = Cursor::new(buf);
+//      try!(self.2.as_mut().unwrap().send_shadow_simkey(w)); 
+      tunn_r.rep_key.as_mut().unwrap().send_shadow_simkey(&mut cbuf).unwrap();
+      let mut t = cbuf.into_inner();
+ 
+    }
+    }
 
     // proxy message test
     proxy_content(
@@ -179,11 +203,23 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
     &cache_ids[i][..],
     ).unwrap();
 
+    // get cached key for Tunnel
+//    if let TunnelMode::Tunnel(..) = tunn_r.mode {
+//
+    let pcid = tunn_r.previous_cacheid.clone();
+    let writerex = tunn_r.rep_key.map(|rk| TunnelCachedWriterExt::new(rk, pcid, SizedWindows::new(TestSizedWindows)));
+      cache.push( 
+        CachedInfo {
+          cached_key : writerex,
+          prev_peer : tunn_r.previous_cacheid,
+      });
+ //   }
+
+
  }
    output.flush().unwrap();
 
   }
-
 
   // read message test for dest
   {
@@ -193,6 +229,7 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
     let mut readbuf = vec![0;read_buffer_length];
     let mut input_v = Cursor::new(output.into_inner());
     let mut tunn_re = TunnelReaderExt::new(route.get(route_len - 1).unwrap(),SizedWindows::new(TestSizedWindows),None,None);
+    {
     let mut tunn_r = tunn_re.as_reader(&mut input_v);
     assert_eq!(tunn_r.1.is_dest(), None);
     let mut emptybuf = [];
@@ -220,14 +257,15 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
       };
 
       assert!(l!=0);
-    if tunn_r.1.mode.do_cache() {
-     assert_eq!(tunn_r.1.previous_cacheid, *cache_ids.last().unwrap());
-    }
-
 
       assert_eq!(&readbuf[..l], &input[ix..ix + l]);
       ix += l;
     }
+    if tunn_r.1.mode.do_cache() {
+      // last - 1 (last is test cache id of dest (used for long term route(not query_once))
+      assert_eq!(tunn_r.1.previous_cacheid, cache_ids[route_len - 2]);
+    }
+
 
     //let l = tunn_r.read(&mut readbuf).unwrap();
     //assert!(l==0);
@@ -251,9 +289,101 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
         assert_eq!(ecode, &vec_route.last().unwrap().0);
       },
     }
+
+  }
+   let pcid = tunn_re.previous_cacheid.clone();
+   let writerex = tunn_re.rep_key.map(|rk| TunnelCachedWriterExt::new(rk, pcid, SizedWindows::new(TestSizedWindows)));
+   cache.push(
+        CachedInfo {
+          cached_key : writerex,
+          prev_peer : tunn_re.previous_cacheid,
+    });
+
+  }
+
+  // reply
+  match tmode {
+    TunnelMode::Tunnel(_,_,_) => {
+      // cached object : reply like error but with a key
+      tunnel_rep_cached (vec_route, tc, cache, cache_ids, ocr.unwrap());
+
+
+    },
+    TunnelMode::BiTunnel(_,_,_,_) => {
+      // TODO
+    },
+    _ => (),
   }
 
 }
+pub fn tunnel_rep_cached<P : Peer> (route : Vec<(usize,&P)>, tc : TunnelTestConfig<<<P as Peer>::Shadow as Shadow>::ShadowMode>, mut cache : Vec<CachedInfo<P>>, mut cache_ids:Vec<Vec<u8>>, mut dest_reader : TunnelCachedReaderExt<SizedWindows<TestSizedWindows>,P>)
+where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
+{
+  let mut inputb = vec![0;tc.input_length];
+  let mut rnd = OsRng::new().unwrap();
+  rnd.fill_bytes(&mut inputb);
+  let input_or = inputb;
+  let mut input = input_or.clone();
+  let mut i = cache.len();
+  let send_cache_id = cache_ids.pop().unwrap();
+  for cach in cache.iter_mut().rev() {
+    let mut output = Cursor::new(Vec::new());
+    // TODO Tunnel_Cached_Writer (write header with tunn_mode... plus encode with shadow sim)
+    // TODO cachedkey as compextw (when stored) 
+    let writerex : &mut TunnelCachedWriterExt<SizedWindows<TestSizedWindows>,P> = cach.cached_key.as_mut().unwrap();
+    CompW::new(&mut output, writerex).write_all(&input[..]).unwrap();
+                                             // send our id for long term cached Some(&(cache_ids.pop())));
+
+    // use of tunnel_reader to have a real looking way of doing it but nicer approach is read state
+    // then read key:
+    //
+    // let tun_state = try!(bin_decode(r, SizeLimit::Infinite).map_err(|e|BindErr(e)));
+    //  if let TunnelState::ReplyCached = tun_state {
+    //    cache_id = try!(bin_decode(r, SizeLimit::Infinite).map_err(|e|BindErr(e)));
+    
+    i = i - 1;
+    let us_cache_id = cache_ids.pop().unwrap();
+    let or = output.into_inner();
+    let mut input_v = Cursor::new(or);
+    let mut tunn_r = TunnelReaderExt::new(route.get(i).unwrap().1,SizedWindows::new(TestSizedWindows),None,None);
+    tunn_r.read_header(&mut input_v).unwrap();
+    assert_eq!(tunn_r.is_dest(), None);
+    assert_eq!(tunn_r.state, TunnelState::ReplyCached);
+    assert_eq!(tunn_r.previous_cacheid, us_cache_id);
+    // proxy it
+    let mut readbuf = vec![0;tc.read_buffer_length];
+    if i == 0 {
+      let mut cbuf = Cursor::new(Vec::new());
+      let mut ri = 1;
+      dest_reader.read_header(&mut input_v).unwrap();
+      while ri > 0 {
+        ri = dest_reader.read_from(&mut input_v, &mut readbuf).unwrap();
+        cbuf.write_all(&readbuf[0..ri]).unwrap();
+      }
+
+    let res = cbuf.into_inner();
+    let sor = input_or.len();
+    assert_eq!(res[..sor], input_or[..sor]);
+
+
+    } else {
+      let mut nextinput = Cursor::new(Vec::new());
+      let mut readerex : SizedWindows<TestSizedWindows> = SizedWindows::new(TestSizedWindows);
+      readerex.read_header(&mut input_v).unwrap();
+      let mut ri = 1;
+      while ri > 0 {
+        ri = readerex.read_from(&mut input_v, &mut readbuf).unwrap();
+        nextinput.write_all(&readbuf[0..ri]).unwrap();
+      }
+
+      input = nextinput.into_inner();
+
+    }
+  }
+
+  // dest (state and cache id read : from cache id we identify as dest and get our DestCachedReader
+}
+
 
 /// return error up to 
 pub fn tunnel_test_err<P : Peer> (route : Vec<(usize,&P)>, tc : TunnelTestConfig<<<P as Peer>::Shadow as Shadow>::ShadowMode>, tunn_r : &mut TunnelReaderExt<SizedWindows<TestSizedWindows>,P>, buf : &mut [u8],input_v : &mut Cursor<Vec<u8>>, err_p : usize)
@@ -310,11 +440,11 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
     match tunnel::read_state(&mut input_v).unwrap() {
       TunnelState::QErrorCached => {
         let cid = tunnel::read_cacheid(&mut input_v).unwrap();
-        assert!(&cid == cache_ids.get(i).unwrap());
-        let cid_from_cache = cache_ids.get(i - 1).unwrap();
-        let cached_errcode = route.get(i).unwrap().0;
+        assert!(cid == *cache_ids.get(i).unwrap());
+        let cid_from_cache = &cache_ids.get(i - 1).unwrap();
+        let cached_errcode = route.get(i).unwrap();
 
-        tunnel::proxy_cached_err (&mut input_v, &mut output, &cid_from_cache[..], cached_errcode).unwrap();
+        tunnel::proxy_cached_err (&mut input_v, &mut output, &cid_from_cache[..], cached_errcode.0).unwrap();
       },
       TunnelState::QError => {
         panic!("TODO");
@@ -333,7 +463,7 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
   match tunnel::read_state(&mut input_v).unwrap() {
     TunnelState::QErrorCached => {
       let cid = tunnel::read_cacheid(&mut input_v).unwrap();
-      assert!(&cid == cache_ids.get(0).unwrap());
+      assert!(cid == *cache_ids.get(0).unwrap());
       // reading cache we know we are dest and we retrieve route
       assert_eq!(tunnel::identify_cached_errcode(&mut input_v, route).unwrap(), err_p);
     },
@@ -437,6 +567,17 @@ fn tunnel_fourhop_noreptunnel_3() {
   tunnel_testpeer_test(TunnelTestConfig::new_norep(4, TunnelShadowMode::Last, 500, 130, 360, ShadowModeTest::NoShadow, ShadowModeTest::NoShadow,ErrorHandlingMode::KnownDest(None)));
 }
 
+fn tunnel_nohop_cachedtunnel_3() {
+  tunnel_testpeer_test(TunnelTestConfig::new_cached(2, TunnelShadowMode::Last, 500, 130, 360, ShadowModeTest::NoShadow, ShadowModeTest::NoShadow,ErrorHandlingMode::ErrorCachedRoute));
+}
+
+#[test]
+fn tunnel_twohop_cachedtunnel_3() {
+  tunnel_testpeer_test(TunnelTestConfig::new_cached(4, TunnelShadowMode::Last, 500, 130, 360, ShadowModeTest::NoShadow, ShadowModeTest::NoShadow,ErrorHandlingMode::ErrorCachedRoute));
+}
+
+
+
 #[test]
 fn tunnel_cached_error() {
   let mut tc = TunnelTestConfig::new_norep(6, TunnelShadowMode::Full, 500, 130, 360, ShadowModeTest::SimpleShift, ShadowModeTest::SimpleShift,
@@ -491,6 +632,12 @@ pub fn new_norep(nbpeer : usize, tsmode : TunnelShadowMode,  input_length : usiz
   let tmode = TunnelMode::NoRepTunnel((nbpeer as u8) - 1,tsmode, em);
   TunnelTestConfig::new(nbpeer,tmode, input_length, write_buffer_length, read_buffer_length, shead, scont)
 }
+pub fn new_cached(nbpeer : usize, tsmode : TunnelShadowMode,  input_length : usize, write_buffer_length : usize, read_buffer_length : usize, shead : SM, scont : SM, em : ErrorHandlingMode) -> TunnelTestConfig<SM> {
+
+  let tmode = TunnelMode::Tunnel((nbpeer as u8) - 1,tsmode, em);
+  TunnelTestConfig::new(nbpeer,tmode, input_length, write_buffer_length, read_buffer_length, shead, scont)
+}
+
 pub fn new_notunnel(input_length : usize, write_buffer_length : usize, read_buffer_length : usize, shead : SM, scont : SM) -> TunnelTestConfig<SM> {
   TunnelTestConfig::new(2,TunnelMode::NoTunnel, input_length, write_buffer_length, read_buffer_length, shead, scont)
 }
