@@ -21,6 +21,7 @@ use rand::Rng;
 /// Test shadowing, do not use (slow, clear password in header).
 /// Designed for testing (simply increment u8 with peer key).
 /// First u8 is peer key and second one is transaction key (if used).
+#[derive(Clone)]
 pub struct ShadowTest (pub u8, pub u8, pub ShadowModeTest);
 
 #[derive(Debug,RustcDecodable,RustcEncodable,Clone,PartialEq,Eq)]
@@ -74,13 +75,11 @@ impl ShadowTest {
       },
     }
   }
-  fn shadow_simkey() -> Vec<u8> {
+  pub fn shadow_simkey() -> Vec<u8> {
     let mut res = vec![0;1];
     thread_rng().fill_bytes(&mut res);
     res
   }
-
-
 }
 
 impl ShadowBase for ShadowTest {
