@@ -1,3 +1,6 @@
+
+use std::rc::Rc;
+use std::cell::RefCell;
 use rand::ThreadRng;
 use rand::thread_rng;
 use rand::Rng;
@@ -14,22 +17,30 @@ use mydht_base::tunnel_new::{
   RouteProvider,
   SymProvider,
   ReplyProvider,
+  TunnelNoRep,
 };
-use mydht_base::tunnel_new::nope::Nope;
+use mydht_base::tunnel_new::nope::{Nope,TunnelNope};
 use mydht_base::tunnel_new::full::{
   Full,
   GenTunnelTraits,
   TunnelCachedWriterExt,
   TunnelCachedReaderExt,
+
+  TunnelCachedWriterExtClone,
+  TunnelCachedReaderExtClone,
   FullW,
+  TunnelWriterFull,
 };
 use mydht_base::tunnel_new::info::multi::{
   MultipleReplyMode,
   ReplyInfoProvider,
-  ReplyInfo,
+  MultipleReplyInfo,
+  NoMultiRepProvider,
 };
 use mydht_base::tunnel_new::info::error::{
-  MultiErrorInfo,
+  MultipleErrorInfo,
+  MulErrorProvider,
+  NoErrorProvider,
 };
 use std::collections::HashMap;
 use std::io::{
@@ -79,8 +90,8 @@ impl SizedWindowsParams for TestSizedWindows {
     const SECURE_PAD : bool = false;
 }
 
-type CachedR = TunnelCachedReaderExt<SRead,SizedWindows<TestSizedWindows>>;
-type CachedW = TunnelCachedWriterExt<SWrite,SizedWindows<TestSizedWindows>>;
+type CachedR = TunnelCachedReaderExtClone<SRead,SizedWindows<TestSizedWindows>>;
+type CachedW = TunnelCachedWriterExtClone<SWrite,SizedWindows<TestSizedWindows>>;
 
 pub struct CachedInfo {
   // TODO rename field plus rem option
@@ -103,10 +114,11 @@ impl CachedInfoManager {
 /// TODO type for SSR 
 impl TunnelCache<CachedW,CachedR> for CachedInfoManager {
 
-  fn put_symw_tunnel(&mut self, ssw : CachedW, ppi : Vec<u8>) -> Result<()> {
+//  fn put_symw_tunnel(&mut self, k, &[u8], RcRefCell<<CachedW>>) -> Result<()>;
+  fn put_symw_tunnel(&mut self, k : &[u8], ssw : CachedW) -> Result<()> {
     self.0.push(CachedInfo{
       cached_key : Some(ssw),
-      prev_peer : ppi,
+      prev_peer : k.to_vec(),
     });
 
   
@@ -211,15 +223,10 @@ impl<P : Peer> SymProvider<SWrite,SRead,P> for SProv {
 pub struct TunnelTestConfig<P:Peer> {
     pub me : P,
     pub dest : P,
-    pub error_hop : usize, // 0 as no error, then ix of proxy hop (starting at one)
     pub nbpeer : usize,
-    pub tmode : TunnelMode,
     pub input_length : usize,
     pub write_buffer_length : usize,
     pub read_buffer_length : usize,
-    pub shead : <<P as Peer>::Shadow as Shadow>::ShadowMode,
-    pub scont : <<P as Peer>::Shadow as Shadow>::ShadowMode,
-    pub cache_ids : Vec<Vec<u8>>,
     pub reply_mode : MultipleReplyMode,
     pub error_mode : MultipleReplyMode,
 }
@@ -304,8 +311,9 @@ impl<P : Peer> GenTunnelTraits for ReplyTraits<P> {
   type LR = SizedWindows<TestSizedWindows>;
   type RP = Nope;
   type RW = Nope;
-  type REP = Nope;
-  type EP = Nope;
+  type REP = NoMultiRepProvider;
+  type EP = NoErrorProvider;
+  type TNR = TunnelNope<P>;
 }
 impl<P : Peer> GenTunnelTraits for TestTunnelTraits<P> {
   type P = P;
@@ -315,21 +323,24 @@ impl<P : Peer> GenTunnelTraits for TestTunnelTraits<P> {
   type LW = SizedWindows<TestSizedWindows>;
   type LR = SizedWindows<TestSizedWindows>;
   type RP = Rp<P>;
+  type TNR = Full<ReplyTraits<P>>;
 //pub struct ReplyInfoProvider<E : ExtWrite + Clone, TNR : TunnelNoRep,SSW,SSR, SP : SymProvider<SSW,SSR>, RP : RouteProvider<TNR::P>> {
 //impl<E : ExtWrite + Clone,P : Peer,TW : TunnelWriter, TNR : TunnelNoRep<P=P,TW=TW>,SSW,SSR,SP : SymProvider<SSW,SSR>,RP : RouteProvider<P>> ReplyProvider<P, ReplyInfo<E,P,TW>,SSW,SSR> for ReplyInfoProvider<E,TNR,SSW,SSR,SP,RP> {
 //
 //impl<E : ExtWrite, P : Peer, RI : RepInfo, EI : Info> TunnelWriter for FullW<RI,EI,P,E> {
 //type TW = FullW<ReplyInfo<TT::LW,TT::P,TT::RW>, MultiErrorInfo<TT::LW,TT::RW>, TT::P, TT::LW>;
-  type RW = FullW<ReplyInfo<Self::LW,Self::P,Nope>, MultiErrorInfo<Self::LW,Nope>,Self::P, Self::LW>;
+  type RW = TunnelWriterFull<FullW<MultipleReplyInfo<Self::P>, MultipleErrorInfo,Self::P, Self::LW,Nope>>;
+  //type RW = TunnelWriterFull<FullW<MultipleReplyInfo<Self::LW,Self::P,Nope>, MultiErrorInfo<Self::LW,Nope>,Self::P, Self::LW>>;
   type REP = ReplyInfoProvider<
-    SizedWindows<TestSizedWindows>,
-    Full<ReplyTraits<P>>,
+//    SizedWindows<TestSizedWindows>,
+//    Full<ReplyTraits<P>>,
+    P,
     SWrite,
     SRead,
     SProv,
     SingleRp<P>
   >;
-  type EP = Nope; // TODO
+  type EP = NoErrorProvider; // TODO
 }
 
 
@@ -342,15 +353,10 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
  let TunnelTestConfig {
      me : me,
      dest : dest,
-     error_hop : error_hop,
      nbpeer : nbpeer,
-     tmode : tmode,
      input_length : input_length,
      write_buffer_length : write_buffer_length,
      read_buffer_length : read_buffer_length,
-     shead : shead,
-     scont : scont,
-     cache_ids : mut cache_ids,
      reply_mode : reply_mode,
      error_mode : error_mode,
  } = tc.clone();
@@ -358,7 +364,8 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
    MultipleReplyMode::OtherRoute => route_prov.new_reply_route(&dest).into_iter().cloned().collect(),
    _ => Vec::new(),
  };
- // TODO error in reply ??
+ // TODO error in reply ?? TODO specific full for it given reply full!!(no route, ...) : must be
+ // use with getReplyWriter
  let tunnel_reply : Full<ReplyTraits<P>> = Full {
   me : dest.clone(),
   reply_mode : MultipleReplyMode::NoHandling,
@@ -366,25 +373,23 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
   cache : Nope,
 //  pub sym_prov : TT::SP,
   route_prov : Nope,
-  reply_prov : Nope,
-  error_prov : Nope,
+  reply_prov : NoMultiRepProvider,
+  error_prov : NoErrorProvider,
   rng : thread_rng(),
   limiter_proto_w : SizedWindows::new(TestSizedWindows),
   limiter_proto_r : SizedWindows::new(TestSizedWindows),
+  tunrep : TunnelNope::new(),
   _p : PhantomData,
  };
 
-
  let rip = ReplyInfoProvider {
    mode : reply_mode.clone(),
-   lim : SizedWindows::new(TestSizedWindows),
-   tunrep : tunnel_reply,
    symprov : SProv(ShadowTest (0,0, ShadowModeTest::SimpleShift)),
    routeprov : SingleRp(route_rep),
    _p : PhantomData,
  };
 
- let tunnel : Full<TestTunnelTraits<P>> = Full {
+ let mut tunnel : Full<TestTunnelTraits<P>> = Full {
   me : me,
   reply_mode : reply_mode,
   error_mode : error_mode,
@@ -392,13 +397,13 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
 //  pub sym_prov : TT::SP,
   route_prov : route_prov,
   reply_prov : rip,
-  error_prov : Nope, // TODO error p
+  error_prov : NoErrorProvider, // TODO error p
   rng : thread_rng(),
   limiter_proto_w : SizedWindows::new(TestSizedWindows),
   limiter_proto_r : SizedWindows::new(TestSizedWindows),
+  tunrep : tunnel_reply,
   _p : PhantomData,
  };
-
 
   let mut inputb = vec![0;input_length];
   let mut rnd = OsRng::new().unwrap();
@@ -424,22 +429,23 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
       cache_ids[0].clone(),
       Some(SizedWindows::new(TestSizedWindows)),// for cached reader
     ).unwrap();
-
-    let mut tunn_w = tunn_we.as_writer(&mut output);
-    
-    //tunn_w.write_all(&input[..input_length]).unwrap();
-    let mut ix = 0;
-    while ix < input_length {
-      if ix + write_buffer_length < input_length {
-        ix += tunn_w.write(&input[ix..ix + write_buffer_length]).unwrap();
-      } else {
-        ix += tunn_w.write(&input[ix..]).unwrap();
+*/
+    let mut tunn_we = tunnel.new_writer(&dest);
+    { // shorten lifetime to write end on release from compw
+      let mut tunn_w = tunn_we.as_write(&mut output);
+      
+      // tunn_w.write_all(&input[..input_length]).unwrap();
+      let mut ix = 0;
+      while ix < input_length {
+        if ix + write_buffer_length < input_length {
+          ix += tunn_w.write(&input[ix..ix + write_buffer_length]).unwrap();
+        } else {
+          ix += tunn_w.write(&input[ix..]).unwrap();
+        }
       }
+      tunn_w.flush().unwrap();
     }
-    tunn_w.flush().unwrap();
     // TODO create tunnel reader from possible cached tunnel
-    Some(())
-  };*/
 
 }
 
@@ -511,4 +517,29 @@ PeerTest {
 ].to_vec()
 }
 
+#[test]
+fn tunnel_nohop_noreptunnel_1() {
+  tunnel_testpeer_test(2, MultipleReplyMode::NoHandling, MultipleReplyMode::NoHandling, 500, 360, 130);
+}
+
+#[test]
+fn tunnel_nohop_noreptunnel_2() {
+  tunnel_testpeer_test(3, MultipleReplyMode::NoHandling, MultipleReplyMode::NoHandling, 500, 360, 130);
+}
+
+pub fn tunnel_testpeer_test(nbpeer : usize, replymode : MultipleReplyMode, errormode : MultipleReplyMode,  input_length : usize, write_buffer_length : usize, read_buffer_length : usize) {
+  let r = peer_tests();
+  let tc = TunnelTestConfig {
+    me : r[0].clone(),
+    dest : r[nbpeer - 1].clone(),
+    nbpeer : nbpeer,
+    input_length : input_length,
+    write_buffer_length : write_buffer_length,
+    read_buffer_length : read_buffer_length,
+    reply_mode : replymode,
+    error_mode : errormode,
+  };
+  let rp = Rp::new (tc.nbpeer,peer_tests(), peer_tests_2());
+  tunnel_test(rp, tc); 
+}
 
