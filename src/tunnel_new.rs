@@ -19,10 +19,13 @@ use mydht_base::tunnel_new::{
   ReplyProvider,
   TunnelNoRep,
   TunnelReaderNoRep,
+  Tunnel,
 };
 use mydht_base::tunnel_new::nope::{Nope,TunnelNope};
 use mydht_base::tunnel_new::full::{
   Full,
+  DestFull,
+  FullR,
   GenTunnelTraits,
   TunnelCachedWriterExt,
   TunnelCachedReaderExt,
@@ -86,7 +89,8 @@ impl SizedWindowsParams for TestSizedWindowsHead {
 }
 
 impl SizedWindowsParams for TestSizedWindows {
-    const INIT_SIZE : usize = 45;
+//    const INIT_SIZE : usize = 45;
+    const INIT_SIZE : usize = 15;
     const GROWTH_RATIO : Option<(usize,usize)> = Some((3,2));
     const WRITE_SIZE : bool = true;
     const SECURE_PAD : bool = false;
@@ -233,6 +237,7 @@ pub struct TunnelTestConfig<P:Peer> {
     pub read_buffer_length : usize,
     pub reply_mode : MultipleReplyMode,
     pub error_mode : MultipleErrorMode,
+    pub test_mode : TestMode,
 }
 
 #[derive(Clone)]
@@ -283,6 +288,13 @@ impl<P : Peer> RouteProvider<P> for Rp<P> {
     r
   }
 }
+fn new_reply_route_1<P : Clone> (base : &[P], l : usize, dest : &P) -> Vec<P> {
+
+  let mut res : Vec<P> = base[..l].iter().rev().map(|a|a.clone()).collect();
+  res[0] = dest.clone();
+  res
+}
+
 
 impl<P : Peer> RouteProvider<P> for SingleRp<P> {
   fn new_route (&mut self, dest : &P) -> Vec<&P> {
@@ -309,14 +321,19 @@ struct ReplyTraits<P : Peer>(PhantomData<P>);
 struct TestTunnelTraits<P : Peer>(PhantomData<P>);
 impl<P : Peer> GenTunnelTraits for ReplyTraits<P> {
   type P = P;
-  type SSW = Nope;
-  type SSR = Nope;
+  type SSW = SWrite;
+  type SSR = SRead;
   type TC = Nope;
   type LW = SizedWindows<TestSizedWindows>;
   type LR = SizedWindows<TestSizedWindows>;
   type RP = Nope;
   type RW = Nope;
-  type REP = NoMultiRepProvider;
+  type REP = ReplyInfoProvider<
+    P,
+    SWrite,
+    SRead,
+    SProv,
+  >;
   type EP = NoErrorProvider;
   type TNR = TunnelNope<P>;
 }
@@ -343,19 +360,130 @@ impl<P : Peer> GenTunnelTraits for TestTunnelTraits<P> {
     SWrite,
     SRead,
     SProv,
-    SingleRp<P>
   >;
   type EP = NoErrorProvider; // TODO
 }
+#[derive(Clone)]
+pub enum TestMode {
+  NoReply,
+  Reply(usize), // param nb reply
+  // ErrorInQuery
+}
+fn new_full_tunnel<P : Peer> (tc : &TunnelTestConfig<P>, from : &P) 
+                          -> Full<TestTunnelTraits<P>>
+where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
+{
+  let mut route_prov = Rp::new (tc.nbpeer,tc.route1.clone(),tc.route2.clone());
+  let mut cache : CachedInfoManager = CachedInfoManager(Vec::new(),0,0);
+  let TunnelTestConfig {
+    me : _,
+    dest : dest,
+    nbpeer : nbpeer,
+    route1 : route1,
+    route2 : route2,
+    input_length : input_length,
+    write_buffer_length : write_buffer_length,
+    read_buffer_length : read_buffer_length,
+    reply_mode : reply_mode,
+    error_mode : error_mode,
+    test_mode : test_mode,
+  } = tc.clone();
+
+  let route_rep : Vec<P> = match reply_mode {
+    MultipleReplyMode::OtherRoute => new_reply_route_1 (&route2[..],nbpeer, &dest),
+    _ => new_reply_route_1(&route1[..],nbpeer, &dest),
+  };
+  // TODO error in reply ?? TODO specific full for it given reply full!!(no route, ...) : must be
+  // use with getReplyWriter
+  let tunnel_reply : Full<ReplyTraits<P>> = Full {
+    me : dest.clone(),
+    // reply mode here is major
+    reply_mode : MultipleReplyMode::RouteReply,
+    error_mode : MultipleErrorMode::NoHandling,
+    cache : Nope,
+    //  pub sym_prov : TT::SP,
+    route_prov : Nope,
+    reply_prov : ReplyInfoProvider {
+      mode : MultipleReplyMode::RouteReply,
+      symprov : SProv(ShadowTest (0,0, ShadowModeTest::SimpleShift)),
+      _p : PhantomData,
+    },
+    error_prov : NoErrorProvider,
+    rng : thread_rng(),
+    limiter_proto_w : SizedWindows::new(TestSizedWindows),
+    limiter_proto_r : SizedWindows::new(TestSizedWindows),
+    tunrep : TunnelNope::new(),
+    reply_once_buf_size : 256,
+    _p : PhantomData,
+  };
+
+  let rip = ReplyInfoProvider {
+    mode : reply_mode.clone(),
+    symprov : SProv(ShadowTest (0,0, ShadowModeTest::SimpleShift)),
+    _p : PhantomData,
+  };
+
+  Full {
+    me : from.clone(),
+    reply_mode : reply_mode.clone(),
+    error_mode : error_mode,
+    cache : cache,
+    //  pub sym_prov : TT::SP,
+    route_prov : route_prov,
+    reply_prov : rip,
+    error_prov : NoErrorProvider, // TODO error p
+    rng : thread_rng(),
+    limiter_proto_w : SizedWindows::new(TestSizedWindows),
+    limiter_proto_r : SizedWindows::new(TestSizedWindows),
+    tunrep : tunnel_reply,
+    reply_once_buf_size : 256,
+    _p : PhantomData,
+  }
 
 
+}
+                        
+ 
 /// main tunnel test : send message over a route
 pub fn tunnel_test<P : Peer> (  tc : TunnelTestConfig<P>)
 where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
 {
+ // TODO from here generic function
+  let mut tunnels : Vec<_> = tc.route1[..tc.nbpeer].iter().map(|p|{
+    new_full_tunnel(&tc, &p)
+  }).collect();
 
- let mut route_prov = Rp::new (tc.nbpeer,tc.route1.clone(),tc.route2.clone());
- let mut cache : CachedInfoManager = CachedInfoManager(Vec::new(),0,0);
+  let tunn_we = tunnels[0].new_writer(&tc.dest);
+  let output : Cursor<Vec<u8>> = Cursor::new(Vec::new());
+  send_test(tc, tunn_we, tunnels, output);
+}
+
+fn reply_test<P : Peer> (mut tc : TunnelTestConfig<P>, dr : 
+                         DestFull<FullR<MultipleReplyInfo<P>,MultipleErrorInfo,P,SizedWindows<TestSizedWindows>>,SRead, SizedWindows<TestSizedWindows>>
+                         , mut input : Cursor<Vec<u8>>, tunnel : &mut Full<TestTunnelTraits<P>>)
+where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
+{
+   let reply_mode = tc.reply_mode.clone();
+   let route_rep : Vec<P> = match reply_mode {
+     MultipleReplyMode::OtherRoute => new_reply_route_1 (&tc.route2[..],tc.input_length, &tc.dest),
+     _ => new_reply_route_1(&tc.route1[..],tc.nbpeer, &tc.dest),
+   };
+
+   let mut output : Cursor<Vec<u8>> = Cursor::new(Vec::new());
+
+   let rw = tunnel.new_reply_writer(dr, &mut input, &mut output).unwrap();
+   let mut tunnelsrep : Vec<_> = route_rep.iter().map(|p|{
+    new_full_tunnel(&tc, &p)
+   }).collect();
+
+
+   // write 
+   send_test(tc, rw, tunnelsrep, output);
+}
+fn send_test<P : Peer, W : ExtWrite> (mut tc : TunnelTestConfig<P>, mut tunn_we : W, 
+                         mut tunnels : Vec<Full<TestTunnelTraits<P>>>, mut output : Cursor<Vec<u8>>)
+where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
+{
  let TunnelTestConfig {
      me : me,
      dest : dest,
@@ -367,58 +495,13 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
      read_buffer_length : read_buffer_length,
      reply_mode : reply_mode,
      error_mode : error_mode,
+     test_mode : test_mode,
  } = tc.clone();
- let route_rep : Vec<P> = match reply_mode {
-   MultipleReplyMode::OtherRoute => route_prov.new_reply_route(&dest).into_iter().cloned().collect(),
-   _ => Vec::new(),
- };
- // TODO error in reply ?? TODO specific full for it given reply full!!(no route, ...) : must be
- // use with getReplyWriter
- let tunnel_reply : Full<ReplyTraits<P>> = Full {
-  me : dest.clone(),
-  reply_mode : MultipleReplyMode::NoHandling,
-  error_mode : MultipleErrorMode::NoHandling,
-  cache : Nope,
-//  pub sym_prov : TT::SP,
-  route_prov : Nope,
-  reply_prov : NoMultiRepProvider,
-  error_prov : NoErrorProvider,
-  rng : thread_rng(),
-  limiter_proto_w : SizedWindows::new(TestSizedWindows),
-  limiter_proto_r : SizedWindows::new(TestSizedWindows),
-  tunrep : TunnelNope::new(),
-  _p : PhantomData,
- };
 
- let rip = ReplyInfoProvider {
-   mode : reply_mode.clone(),
-   symprov : SProv(ShadowTest (0,0, ShadowModeTest::SimpleShift)),
-   routeprov : SingleRp(route_rep),
-   _p : PhantomData,
- };
 
- let mut tunnel : Full<TestTunnelTraits<P>> = Full {
-  me : me,
-  reply_mode : reply_mode,
-  error_mode : error_mode,
-  cache : cache,
-//  pub sym_prov : TT::SP,
-  route_prov : route_prov,
-  reply_prov : rip,
-  error_prov : NoErrorProvider, // TODO error p
-  rng : thread_rng(),
-  limiter_proto_w : SizedWindows::new(TestSizedWindows),
-  limiter_proto_r : SizedWindows::new(TestSizedWindows),
-  tunrep : tunnel_reply,
-  _p : PhantomData,
- };
-
- // TODO from here generic function
- 
   let mut inputb = vec![0;input_length];
   let mut rnd = OsRng::new().unwrap();
   rnd.fill_bytes(&mut inputb);
-  let mut output : Cursor<Vec<u8>> = Cursor::new(Vec::new());
   let input = inputb;
 /*  let vec_route : Vec<(usize,&P)> = route.iter().map(|p|{
     let errorid = rnd.gen();
@@ -440,8 +523,7 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
       Some(SizedWindows::new(TestSizedWindows)),// for cached reader
     ).unwrap();
 */
-    let mut tunn_we = tunnel.new_writer(&dest);
-    { // shorten lifetime to write end on release from compw
+    { // s lifetime to write end on release from compw
       let mut tunn_w = CompW::new(&mut output, &mut tunn_we);
       
       // tunn_w.write_all(&input[..input_length]).unwrap();
@@ -456,6 +538,7 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
       tunn_w.flush().unwrap();
     }
 
+    // tunnel to use
     let mut emptybuf = [];
     let mut ix;
     let mut readbuf = vec![0;read_buffer_length];
@@ -466,7 +549,8 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
     let nbtoprox = if nbpeer > 2 {nbpeer - 2} else {0};
     let mut nbp = 0;
     for i in 1 .. nbpeer - 1 {
-      tunn_re = tunnel.new_reader();
+      let tunnel = &mut tunnels[i];
+      tunn_re = tunnel.new_reader(); // TODO extremely wrong as it is peer tunnel who should be use : replace with peer specific tunnel
       assert!(tunn_re.is_dest() == None);
       let mut input_v = Cursor::new(output.into_inner());
       output = Cursor::new(Vec::new());
@@ -494,12 +578,13 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
     
     // dest stuff
 
+    let tunnel = &mut tunnels[nbpeer - 1];
     tunn_re = tunnel.new_reader();
     let mut input_v = Cursor::new(output.into_inner());
     tunn_re.read_header(&mut input_v).unwrap();
     assert!(tunn_re.is_dest() == Some(true));
 
-    let mut dest_reader = tunnel.new_dest_reader(tunn_re).unwrap();
+    let mut dest_reader = tunnel.new_dest_reader(tunn_re, &mut input_v).unwrap();
     {
       /* issue with CompR dropping abnormally : commenting for now
       let mut tunn_r = CompR::new(&mut input_v, &mut dest_reader);
@@ -518,9 +603,12 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
         assert_eq!(&readbuf[..l], &input[ix..ix + l]);
         ix += l;
       }*/
+      //let mut buf3 = vec![0;1024];   let a3 = input_v.read( &mut buf3[..]).unwrap(); panic!("b : {:?}", &buf3[..a3]);
       dest_reader.read_header(&mut input_v).unwrap();
       assert_eq!(0,dest_reader.read_from(&mut input_v, &mut emptybuf[..]).unwrap());
       ix = 0;
+
+      let mut it = 0;
       while ix < input_length { // known length
         let l = if ix + readbuf.len() < input.len() { 
           dest_reader.read_from(&mut input_v, &mut readbuf).unwrap()
@@ -531,15 +619,30 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
         assert!(l!=0);
 
         assert_eq!(&readbuf[..l], &input[ix..ix + l]);
+        it += 1;
         ix += l;
       }
-      dest_reader.read_to_end(&mut input_v,&mut readbuf).unwrap();
-      let l = input_v.read(&mut readbuf).unwrap();
-      assert_eq!(l,0);
+      match test_mode {
+        TestMode::NoReply | TestMode::Reply(0) => {
+          dest_reader.read_to_end(&mut input_v,&mut readbuf).unwrap();
+          let l = input_v.read(&mut readbuf).unwrap();
+          assert_eq!(l,0);
+        },
+        TestMode::Reply(nbr) => {
+          tc.test_mode = TestMode::Reply(nbr - 1);
+          match reply_mode {
+            MultipleReplyMode::Route => reply_test(tc, dest_reader, input_v, tunnel),
+            MultipleReplyMode::OtherRoute => reply_test(tc, dest_reader, input_v, tunnel),
+            MultipleReplyMode::NoHandling => (),
+            _ => panic!("Test case not covered"),
+          }
+        },
+      }
+        
     }
 
-
 }
+ 
 
 fn peer_tests () -> Vec<PeerTest> {
 [ PeerTest {
@@ -612,33 +715,39 @@ PeerTest {
 
 #[test]
 fn tunnel_nohop_noreptunnel_1() {
-  tunnel_testpeer_test(2, MultipleReplyMode::Route, MultipleErrorMode::NoHandling, 500, 360, 130);
+  tunnel_testpeer_test(2, MultipleReplyMode::Route, MultipleErrorMode::NoHandling, 500, 360, 130, TestMode::NoReply);
 }
+#[test]
+fn tunnel_nohop_reptunnel_1() {
+  tunnel_testpeer_test(2, MultipleReplyMode::Route, MultipleErrorMode::NoHandling, 500, 360, 130, TestMode::Reply(1));
+}
+
 
 #[test]
 fn tunnel_nohop_noreptunnel_2() {
-  tunnel_testpeer_test(3, MultipleReplyMode::Route, MultipleErrorMode::NoHandling, 500, 360, 130);
+  tunnel_testpeer_test(3, MultipleReplyMode::OtherRoute, MultipleErrorMode::NoHandling, 500, 360, 130, TestMode::NoReply);
 }
 
 #[test]
 fn tunnel_nohop_noreptunnel_3() {
-  tunnel_testpeer_test(6, MultipleReplyMode::NoHandling, MultipleErrorMode::NoHandling, 500, 360, 130);
+  tunnel_testpeer_test(6, MultipleReplyMode::NoHandling, MultipleErrorMode::NoHandling, 500, 360, 130, TestMode::NoReply);
 }
 
 
-pub fn tunnel_testpeer_test(nbpeer : usize, replymode : MultipleReplyMode, errormode : MultipleErrorMode,  input_length : usize, write_buffer_length : usize, read_buffer_length : usize) {
+pub fn tunnel_testpeer_test(nbpeer : usize, replymode : MultipleReplyMode, errormode : MultipleErrorMode,  input_length : usize, write_buffer_length : usize, read_buffer_length : usize, test_mode : TestMode) {
   let r = peer_tests();
   let tc = TunnelTestConfig {
     me : r[0].clone(),
     dest : r[nbpeer - 1].clone(),
     nbpeer : nbpeer,
     route1 : peer_tests(),
-    route2 : peer_tests(),
+    route2 : peer_tests_2(),
     input_length : input_length,
     write_buffer_length : write_buffer_length,
     read_buffer_length : read_buffer_length,
     reply_mode : replymode,
     error_mode : errormode,
+    test_mode : test_mode,
   };
   tunnel_test(tc); 
 }
