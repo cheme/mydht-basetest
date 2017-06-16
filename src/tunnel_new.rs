@@ -465,7 +465,7 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
 {
    let reply_mode = tc.reply_mode.clone();
    let route_rep : Vec<P> = match reply_mode {
-     MultipleReplyMode::OtherRoute => new_reply_route_1 (&tc.route2[..],tc.input_length, &tc.dest),
+     MultipleReplyMode::OtherRoute => new_reply_route_1 (&tc.route2[..],tc.nbpeer, &tc.dest),
      _ => new_reply_route_1(&tc.route1[..],tc.nbpeer, &tc.dest),
    };
 
@@ -721,6 +721,11 @@ fn tunnel_nohop_noreptunnel_1() {
 fn tunnel_nohop_reptunnel_1() {
   tunnel_testpeer_test(2, MultipleReplyMode::Route, MultipleErrorMode::NoHandling, 500, 360, 130, TestMode::Reply(1));
 }
+#[test]
+fn tunnel_nohop_reptunnel_2() {
+  tunnel_testpeer_test(3, MultipleReplyMode::OtherRoute, MultipleErrorMode::NoHandling, 500, 360, 130, TestMode::Reply(1));
+}
+
 
 
 #[test]
