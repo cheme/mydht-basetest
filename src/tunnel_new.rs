@@ -649,31 +649,37 @@ fn peer_tests () -> Vec<PeerTest> {
     nodeid: "toid1".to_string(),
     address : LocalAdd(1),
     keyshift: 2,
+    modesh : test_peer_mode(),
 },
  PeerTest  {
     nodeid: "toid2".to_string(),
     address : LocalAdd(2),
     keyshift: 3,
+    modesh : test_peer_mode(),
 },
  PeerTest {
     nodeid: "toid3".to_string(),
     address : LocalAdd(3),
     keyshift: 4,
+    modesh : test_peer_mode(),
 },
  PeerTest {
     nodeid: "toid4".to_string(),
     address : LocalAdd(4),
     keyshift: 5,
+    modesh : test_peer_mode(),
 },
  PeerTest {
     nodeid: "toid5".to_string(),
     address : LocalAdd(5),
     keyshift: 6,
+    modesh : test_peer_mode(),
 },
  PeerTest {
     nodeid: "toid6".to_string(),
     address : LocalAdd(6),
     keyshift: 5,
+    modesh : test_peer_mode(),
 },
 ].to_vec()
 }
@@ -683,35 +689,46 @@ fn peer_tests_2 () -> Vec<PeerTest> {
     nodeid: "toid1".to_string(),
     address : LocalAdd(1),
     keyshift: 2,
+    modesh : test_peer_mode(),
 },
 PeerTest {
     nodeid: "toid7".to_string(),
     address : LocalAdd(7),
     keyshift: 9,
+    modesh : test_peer_mode(),
 },
  PeerTest  {
     nodeid: "toid8".to_string(),
     address : LocalAdd(8),
     keyshift: 11,
+    modesh : test_peer_mode(),
 },
  PeerTest {
     nodeid: "toid9".to_string(),
     address : LocalAdd(9),
     keyshift: 6,
+    modesh : test_peer_mode(),
 },
  PeerTest {
     nodeid: "toid10".to_string(),
     address : LocalAdd(10),
     keyshift: 2,
+    modesh : test_peer_mode(),
 },
  PeerTest {
     nodeid: "toid11".to_string(),
     address : LocalAdd(11),
     keyshift: 1,
+    modesh : test_peer_mode(),
 },
 ].to_vec()
 }
 
+#[inline]
+fn test_peer_mode() -> ShadowModeTest {
+  ShadowModeTest::SimpleShift
+//  ShadowModeTest::NoShadow
+}
 
 #[test]
 fn tunnel_nohop_noreptunnel_1() {

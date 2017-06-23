@@ -152,7 +152,7 @@ impl ExtWrite for ShadowTest {
     let k = match self.2 {
       ShadowModeTest::NoShadow => Vec::new(),
       ShadowModeTest::SimpleShift => {
-        vec!(self.1)
+        vec!(self.0.overflowing_add(self.1).0)
       },
       ShadowModeTest::SimpleShiftNoHead => vec!(self.0),
     };
@@ -194,7 +194,8 @@ impl ExtRead for ShadowTest {
   fn read_from<R : Read>(&mut self, r : &mut R, buf : &mut[u8]) -> IoResult<usize> {
     let k = match self.2 {
       ShadowModeTest::NoShadow => Vec::new(),
-      ShadowModeTest::SimpleShift => vec!(self.1),
+      ShadowModeTest::SimpleShift => vec!(self.0.overflowing_add(self.1).0),
+      //ShadowModeTest::SimpleShift => vec!(self.0 + self.1), TODO to be still specific to peer
       ShadowModeTest::SimpleShiftNoHead => vec!(self.0),
     };
     self.read_shadow_iter_sim(&k[..], r, buf)

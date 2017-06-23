@@ -26,6 +26,7 @@ pub struct PeerTest {
   pub nodeid  : String,
   pub address : LocalAdd,
   pub keyshift : u8,
+  pub modesh : ShadowModeTest,
 }
 
 impl KeyVal for PeerTest {
@@ -52,7 +53,7 @@ impl Peer for PeerTest {
   }
   #[inline]
   fn get_shadower (&self, _ : bool) -> Self::Shadow {
-    ShadowTest(self.keyshift,0,ShadowModeTest::NoShadow) // default to no shadow
+    ShadowTest(self.keyshift,0,self.modesh.clone()) // default to no shadow
   }
   fn default_auth_mode(&self) -> <Self::Shadow as Shadow>::ShadowMode {
     ShadowModeTest::NoShadow
@@ -93,6 +94,7 @@ read_buffer_length : usize, smode : ShadowModeTest) {
     nodeid: "toid".to_string(),
     address : LocalAdd(1),
     keyshift: 2,
+    modesh : ShadowModeTest::NoShadow, // should not no shadow but currently refactoring
   };
  
   shadower_test(to_p,input_length,write_buffer_length,read_buffer_length,smode);
