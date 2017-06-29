@@ -99,17 +99,17 @@ impl SizedWindowsParams for TestSizedWindows {
 type CachedR = TunnelCachedReaderExtClone<SRead,SizedWindows<TestSizedWindows>>;
 type CachedW = TunnelCachedWriterExtClone<SWrite,SizedWindows<TestSizedWindows>>;
 
-pub struct CachedInfo {
+pub struct CachedInfo<P : Peer> {
   // TODO rename field plus rem option
-  pub cached_key : Option<CachedW>,
+  pub cached_key : Option<(CachedW,<P as Peer>::Address)>,
   pub prev_peer : Vec<u8>,
 }
 
 /// simply vec as regarding algo get are done in push order most of the time
 /// second usize is next get index (starting at 0), last is cache id last ix
-pub struct CachedInfoManager (Vec<CachedInfo>, usize, usize);
+pub struct CachedInfoManager<P : Peer> (Vec<CachedInfo<P>>, usize, usize);
 
-impl CachedInfoManager {
+impl<P : Peer> CachedInfoManager<P> {
   fn inc_ix(&mut self) {
   self.1+=1;
     if self.1 == self.0.len() {
@@ -118,10 +118,10 @@ impl CachedInfoManager {
   }
 }
 /// TODO type for SSR 
-impl TunnelCache<CachedW,CachedR> for CachedInfoManager {
+impl<P : Peer> TunnelCache<(CachedW,<P as Peer>::Address),CachedR> for CachedInfoManager<P> {
 
 //  fn put_symw_tunnel(&mut self, k, &[u8], RcRefCell<<CachedW>>) -> Result<()>;
-  fn put_symw_tunnel(&mut self, k : &[u8], ssw : CachedW) -> Result<()> {
+  fn put_symw_tunnel(&mut self, k : &[u8], ssw : (CachedW,<P as Peer>::Address)) -> Result<()> {
     self.0.push(CachedInfo{
       cached_key : Some(ssw),
       prev_peer : k.to_vec(),
@@ -131,7 +131,7 @@ impl TunnelCache<CachedW,CachedR> for CachedInfoManager {
     Ok(())
   }
 
-  fn get_symw_tunnel(&mut self, k : &[u8]) -> Result<&mut CachedW> {
+  fn get_symw_tunnel(&mut self, k : &[u8]) -> Result<&mut (CachedW,<P as Peer>::Address)> {
 
 
     for i in self.2 .. self.0.len() {
@@ -341,7 +341,7 @@ impl<P : Peer> GenTunnelTraits for TestTunnelTraits<P> {
   type P = P;
   type SSW = SWrite;
   type SSR = SRead;
-  type TC = CachedInfoManager;
+  type TC = CachedInfoManager<P>;
   type LW = SizedWindows<TestSizedWindows>;
   type LR = SizedWindows<TestSizedWindows>;
   type RP = Rp<P>;
@@ -374,7 +374,7 @@ fn new_full_tunnel<P : Peer> (tc : &TunnelTestConfig<P>, from : &P)
 where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
 {
   let mut route_prov = Rp::new (tc.nbpeer,tc.route1.clone(),tc.route2.clone());
-  let mut cache : CachedInfoManager = CachedInfoManager(Vec::new(),0,0);
+  let mut cache : CachedInfoManager<P> = CachedInfoManager(Vec::new(),0,0);
   let TunnelTestConfig {
     me : _,
     dest : dest,
@@ -453,12 +453,13 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
     new_full_tunnel(&tc, &p)
   }).collect();
 
-  let tunn_we = tunnels[0].new_writer(&tc.dest);
+  let (tunn_we,dest) = tunnels[0].new_writer(&tc.dest);
+  assert!(dest == tunnels[1].me.to_address());
   let output : Cursor<Vec<u8>> = Cursor::new(Vec::new());
   send_test(tc, tunn_we, tunnels, output);
 }
 
-fn reply_test<P : Peer> (mut tc : TunnelTestConfig<P>, dr : 
+fn reply_test<P : Peer> (mut tc : TunnelTestConfig<P>, mut dr : 
                          DestFull<FullR<MultipleReplyInfo<P>,MultipleErrorInfo,P,SizedWindows<TestSizedWindows>>,SRead, SizedWindows<TestSizedWindows>>
                          , mut input : Cursor<Vec<u8>>, tunnel : &mut Full<TestTunnelTraits<P>>)
 where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
@@ -471,15 +472,37 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
 
    let mut output : Cursor<Vec<u8>> = Cursor::new(Vec::new());
 
-   let rw = tunnel.new_reply_writer(dr, &mut input, &mut output).unwrap();
-   let mut tunnelsrep : Vec<_> = route_rep.iter().map(|p|{
+   let (mut rw, dest) = tunnel.new_reply_writer(&mut dr, &mut input).unwrap();
+   let tunnelsrep : Vec<_> = route_rep.iter().map(|p|{
     new_full_tunnel(&tc, &p)
    }).collect();
+   assert!(dest == tunnelsrep[1].me.to_address());
+   tunnel.reply_writer_init(&mut rw, &mut dr, &mut input, &mut output).unwrap();
+
 
 
    // write 
    send_test(tc, rw, tunnelsrep, output);
 }
+fn reply_cached_test<P : Peer> (mut tc : TunnelTestConfig<P>, mut dr : 
+                         DestFull<FullR<MultipleReplyInfo<P>,MultipleErrorInfo,P,SizedWindows<TestSizedWindows>>,SRead, SizedWindows<TestSizedWindows>>
+                         , mut input : Cursor<Vec<u8>>, mut tunnels : Vec<Full<TestTunnelTraits<P>>>)
+where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
+{
+   let reply_mode = tc.reply_mode.clone();
+
+   let mut output : Cursor<Vec<u8>> = Cursor::new(Vec::new());
+
+   tunnels.reverse();
+   let (mut rw, dest) = tunnels[0].new_reply_writer(&mut dr, &mut input).unwrap();
+   assert!(dest == tunnels[1].me.to_address());
+   tunnels[0].reply_writer_init(&mut rw, &mut dr, &mut input, &mut output).unwrap();
+
+
+   // write 
+   send_test(tc, rw, tunnels, output);
+}
+
 fn send_test<P : Peer, W : ExtWrite> (mut tc : TunnelTestConfig<P>, mut tunn_we : W, 
                          mut tunnels : Vec<Full<TestTunnelTraits<P>>>, mut output : Cursor<Vec<u8>>)
 where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
@@ -549,14 +572,17 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
     let nbtoprox = if nbpeer > 2 {nbpeer - 2} else {0};
     let mut nbp = 0;
     for i in 1 .. nbpeer - 1 {
+      let from_add = tunnels[i - 1].me.to_address();
+      let to_add = tunnels[i + 1].me.to_address();
       let tunnel = &mut tunnels[i];
-      tunn_re = tunnel.new_reader(); // TODO extremely wrong as it is peer tunnel who should be use : replace with peer specific tunnel
+      tunn_re = tunnel.new_reader(&from_add);
       assert!(tunn_re.is_dest() == None);
       let mut input_v = Cursor::new(output.into_inner());
       output = Cursor::new(Vec::new());
       tunn_re.read_header(&mut input_v).unwrap();
       assert!(tunn_re.is_dest() == Some(false));
-      let mut proxy = tunnel.new_proxy_writer(tunn_re).unwrap();
+      let (mut proxy, dest) = tunnel.new_proxy_writer(tunn_re).unwrap();
+      assert!(dest == to_add);
       proxy.read_header(&mut input_v).unwrap();
       proxy.write_header(&mut output).unwrap();
       while  {
@@ -578,49 +604,53 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
     
     // dest stuff
 
-    let tunnel = &mut tunnels[nbpeer - 1];
-    tunn_re = tunnel.new_reader();
-    let mut input_v = Cursor::new(output.into_inner());
-    tunn_re.read_header(&mut input_v).unwrap();
-    assert!(tunn_re.is_dest() == Some(true));
-
-    let mut dest_reader = tunnel.new_dest_reader(tunn_re, &mut input_v).unwrap();
+    let mut dest_reader;
+    let mut input_v;
     {
-      /* issue with CompR dropping abnormally : commenting for now
-      let mut tunn_r = CompR::new(&mut input_v, &mut dest_reader);
-      assert_eq!(0,tunn_r.read(&mut emptybuf[..]).unwrap());
-      panic!("y");
-      ix = 0;
-      while ix < input_length { // known length
-        let l = if ix + readbuf.len() < input.len() { 
-          tunn_r.read( &mut readbuf).unwrap()
-        } else {
-          tunn_r.read( &mut readbuf[..input.len() - ix]).unwrap()
-        };
+      let from_add = tunnels[nbpeer - 2].me.to_address();
+      let tunnel = &mut tunnels[nbpeer - 1];
+      tunn_re = tunnel.new_reader(&from_add);
+      input_v = Cursor::new(output.into_inner());
+      tunn_re.read_header(&mut input_v).unwrap();
+      assert!(tunn_re.is_dest() == Some(true));
 
-        assert!(l!=0);
+      dest_reader = tunnel.new_dest_reader(tunn_re, &mut input_v).unwrap();
+        /* issue with CompR dropping abnormally : commenting for now
+        let mut tunn_r = CompR::new(&mut input_v, &mut dest_reader);
+        assert_eq!(0,tunn_r.read(&mut emptybuf[..]).unwrap());
+        panic!("y");
+        ix = 0;
+        while ix < input_length { // known length
+          let l = if ix + readbuf.len() < input.len() { 
+            tunn_r.read( &mut readbuf).unwrap()
+          } else {
+            tunn_r.read( &mut readbuf[..input.len() - ix]).unwrap()
+          };
 
-        assert_eq!(&readbuf[..l], &input[ix..ix + l]);
-        ix += l;
-      }*/
-      //let mut buf3 = vec![0;1024];   let a3 = input_v.read( &mut buf3[..]).unwrap(); panic!("b : {:?}", &buf3[..a3]);
-      dest_reader.read_header(&mut input_v).unwrap();
-      assert_eq!(0,dest_reader.read_from(&mut input_v, &mut emptybuf[..]).unwrap());
-      ix = 0;
+          assert!(l!=0);
 
-      let mut it = 0;
-      while ix < input_length { // known length
-        let l = if ix + readbuf.len() < input.len() { 
-          dest_reader.read_from(&mut input_v, &mut readbuf).unwrap()
-        } else {
-          dest_reader.read_from(&mut input_v, &mut readbuf[..input.len() - ix]).unwrap()
-        };
+          assert_eq!(&readbuf[..l], &input[ix..ix + l]);
+          ix += l;
+        }*/
+        //let mut buf3 = vec![0;1024];   let a3 = input_v.read( &mut buf3[..]).unwrap(); panic!("b : {:?}", &buf3[..a3]);
+        dest_reader.read_header(&mut input_v).unwrap();
+        assert_eq!(0,dest_reader.read_from(&mut input_v, &mut emptybuf[..]).unwrap());
+        ix = 0;
 
-        assert!(l!=0);
+        let mut it = 0;
+        while ix < input_length { // known length
+          let l = if ix + readbuf.len() < input.len() { 
+            dest_reader.read_from(&mut input_v, &mut readbuf).unwrap()
+          } else {
+            dest_reader.read_from(&mut input_v, &mut readbuf[..input.len() - ix]).unwrap()
+          };
 
-        assert_eq!(&readbuf[..l], &input[ix..ix + l]);
-        it += 1;
-        ix += l;
+          assert!(l!=0);
+
+          assert_eq!(&readbuf[..l], &input[ix..ix + l]);
+          it += 1;
+          ix += l;
+        }
       }
       match test_mode {
         TestMode::NoReply | TestMode::Reply(0) => {
@@ -631,15 +661,15 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
         TestMode::Reply(nbr) => {
           tc.test_mode = TestMode::Reply(nbr - 1);
           match reply_mode {
-            MultipleReplyMode::Route => reply_test(tc, dest_reader, input_v, tunnel),
-            MultipleReplyMode::OtherRoute => reply_test(tc, dest_reader, input_v, tunnel),
+            MultipleReplyMode::Route => reply_test(tc, dest_reader, input_v, &mut tunnels[nbpeer - 1]),
+            MultipleReplyMode::OtherRoute => reply_test(tc, dest_reader, input_v, &mut tunnels[nbpeer - 1]),
             MultipleReplyMode::NoHandling => (),
+            MultipleReplyMode::CachedRoute => reply_cached_test(tc, dest_reader, input_v, tunnels),
             _ => panic!("Test case not covered"),
           }
         },
       }
         
-    }
 
 }
  
@@ -734,6 +764,22 @@ fn test_peer_mode() -> ShadowModeTest {
 fn tunnel_nohop_noreptunnel_1() {
   tunnel_testpeer_test(2, MultipleReplyMode::Route, MultipleErrorMode::NoHandling, 500, 360, 130, TestMode::NoReply);
 }
+
+#[test]
+fn tunnel_nohop_noreptunnel_1_c() {
+  tunnel_testpeer_test(2, MultipleReplyMode::CachedRoute, MultipleErrorMode::NoHandling, 500, 360, 130, TestMode::NoReply);
+}
+#[test]
+fn tunnel_nohop_reptunnel_1_c() {
+  tunnel_testpeer_test(2, MultipleReplyMode::CachedRoute, MultipleErrorMode::NoHandling, 500, 360, 130, TestMode::Reply(1));
+}
+
+#[test]
+fn tunnel_nohop_noreptunnel_3_c() {
+  tunnel_testpeer_test(6, MultipleReplyMode::CachedRoute, MultipleErrorMode::NoHandling, 500, 360, 130, TestMode::NoReply);
+}
+
+
 #[test]
 fn tunnel_nohop_reptunnel_1() {
   tunnel_testpeer_test(2, MultipleReplyMode::Route, MultipleErrorMode::NoHandling, 500, 360, 130, TestMode::Reply(1));
@@ -741,6 +787,11 @@ fn tunnel_nohop_reptunnel_1() {
 #[test]
 fn tunnel_nohop_reptunnel_2() {
   tunnel_testpeer_test(3, MultipleReplyMode::OtherRoute, MultipleErrorMode::NoHandling, 500, 360, 130, TestMode::Reply(1));
+}
+
+#[test]
+fn tunnel_nohop_reptunnel_3() {
+  tunnel_testpeer_test(6, MultipleReplyMode::OtherRoute, MultipleErrorMode::NoHandling, 500, 360, 130, TestMode::Reply(1));
 }
 
 
