@@ -94,7 +94,7 @@ read_buffer_length : usize, smode : ShadowModeTest) {
     nodeid: "toid".to_string(),
     address : LocalAdd(1),
     keyshift: 2,
-    modesh : ShadowModeTest::NoShadow, // should not no shadow but currently refactoring
+    modesh : smode.clone(),
   };
  
   shadower_test(to_p,input_length,write_buffer_length,read_buffer_length,smode);

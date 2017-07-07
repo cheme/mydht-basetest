@@ -1,5 +1,6 @@
 
 use std::rc::Rc;
+use std::cmp;
 use std::cell::RefCell;
 use rand::ThreadRng;
 use rand::thread_rng;
@@ -14,15 +15,21 @@ use peer::{
 use std::marker::PhantomData;
 use mydht_base::tunnel_new::{
   TunnelCache,
+  TunnelCacheErr,
   RouteProvider,
   SymProvider,
   ReplyProvider,
   TunnelNoRep,
   TunnelReaderNoRep,
+  CacheIdProducer,
   Tunnel,
+  TunnelError,
+  TunnelErrorWriter,
+  TunnelReaderExt,
 };
 use mydht_base::tunnel_new::nope::{Nope,TunnelNope};
 use mydht_base::tunnel_new::full::{
+  ErrorWriter,
   Full,
   DestFull,
   FullR,
@@ -104,6 +111,18 @@ pub struct CachedInfo<P : Peer> {
   pub cached_key : Option<(CachedW,<P as Peer>::Address)>,
   pub prev_peer : Vec<u8>,// TODO rename that is key!!!
 }
+pub struct CachedInfoE<P : Peer> {
+  // TODO rename field plus rem option
+  pub cached_key : Option<(ErrorWriter,<P as Peer>::Address)>,
+  pub prev_peer : Vec<u8>,// TODO rename that is key!!!
+}
+pub struct CachedInfoEI {
+  // TODO rename field plus rem option
+  pub cached_key : Option<Vec<MultipleErrorInfo>>,
+  pub prev_peer : Vec<u8>,// TODO rename that is key!!!
+}
+
+
 
 pub struct CachedInfoR {
   // TODO rename field plus rem option
@@ -114,25 +133,84 @@ pub struct CachedInfoR {
 
 /// simply vec as regarding algo get are done in push order most of the time
 /// second usize is next get index (starting at 0), last is cache id last ix
-pub struct CachedInfoManager<P : Peer> (Vec<CachedInfo<P>>, usize, usize,Vec<CachedInfoR>,usize);
+pub struct CachedInfoManager<P : Peer> (Vec<CachedInfo<P>>, usize, usize,Vec<CachedInfoR>,usize,Vec<CachedInfoE<P>>,usize,Vec<CachedInfoEI>,usize);
+impl<P : Peer> TunnelCacheErr<(ErrorWriter,<P as Peer>::Address), MultipleErrorInfo> for CachedInfoManager<P> {
+   fn put_errw_tunnel(&mut self, k : &[u8], ssw : (ErrorWriter,<P as Peer>::Address)) -> Result<()> {
+    // TODO remove if one...
+    self.5.push(CachedInfoE{
+      cached_key : Some(ssw),
+      prev_peer : k.to_vec(),
+    });
+    Ok(())
+  }
+
+  fn get_errw_tunnel(&mut self, k : &[u8]) -> Result<&mut (ErrorWriter,<P as Peer>::Address)> {
+    for i in self.6 .. self.5.len() {
+      if self.5[i].prev_peer == k {
+        self.6 = i;
+        return Ok(self.5[i].cached_key.as_mut().unwrap())
+      }
+    };
+    for i in 0 .. self.6 {
+      if self.5[i].prev_peer == k {
+        self.6 = i;
+        return Ok(self.5[i].cached_key.as_mut().unwrap())
+      }
+    };
+    Err(Error::new(ErrorKind::Other, "Missing content : TODO change trait to return an option in result"))
+  }
+  fn put_errr_tunnel(&mut self, k : &[u8], v : Vec<MultipleErrorInfo>) -> Result<()> {
+    // TODO remove if one...
+    self.7.push(CachedInfoEI{
+      cached_key : Some(v),
+      prev_peer : k.to_vec(),
+    });
+    Ok(())
+  }
+ 
+  fn get_errr_tunnel(&mut self, k : &[u8]) -> Result<&[MultipleErrorInfo]> {
+    for i in self.8 .. self.7.len() {
+      if self.7[i].prev_peer == k {
+        self.8 = i;
+        return Ok(self.7[i].cached_key.as_mut().unwrap())
+      }
+    };
+    for i in 0 .. self.8 {
+      if self.7[i].prev_peer == k {
+        self.8 = i;
+        return Ok(self.7[i].cached_key.as_mut().unwrap())
+      }
+    };
+    Err(Error::new(ErrorKind::Other, "Missing content : TODO change trait to return an option in result"))
+ 
+  }
+ 
+}
+
+impl<P : Peer> CacheIdProducer for CachedInfoManager<P> {
+  fn new_cache_id (&mut self) -> Vec<u8> {
+  let i = self.2;
+  self.2 = i + 1; 
+  vec!(i as u8, (i + 1) as u8, (i + 2) as u8, (i + 3) as u8)
+  }
+
+
+}
 
 /// TODO type for SSR 
 impl<P : Peer> TunnelCache<(CachedW,<P as Peer>::Address),CachedR> for CachedInfoManager<P> {
 
 //  fn put_symw_tunnel(&mut self, k, &[u8], RcRefCell<<CachedW>>) -> Result<()>;
   fn put_symw_tunnel(&mut self, k : &[u8], ssw : (CachedW,<P as Peer>::Address)) -> Result<()> {
+    // TODO remove if one...
     self.0.push(CachedInfo{
       cached_key : Some(ssw),
       prev_peer : k.to_vec(),
     });
-
-  
     Ok(())
   }
 
   fn get_symw_tunnel(&mut self, k : &[u8]) -> Result<&mut (CachedW,<P as Peer>::Address)> {
-
-
     for i in self.1 .. self.0.len() {
       if self.0[i].prev_peer == k {
         self.1 = i;
@@ -145,10 +223,9 @@ impl<P : Peer> TunnelCache<(CachedW,<P as Peer>::Address),CachedR> for CachedInf
         return Ok(self.0[i].cached_key.as_mut().unwrap())
       }
     };
-
     Err(Error::new(ErrorKind::Other, "Missing content : TODO change trait to return an option in result"))
   }
- 
+
   fn has_symw_tunnel(&mut self, k : &[u8]) -> bool {
     self.get_symw_tunnel(k).is_ok()
   }
@@ -177,12 +254,6 @@ impl<P : Peer> TunnelCache<(CachedW,<P as Peer>::Address),CachedR> for CachedInf
 
     Err(Error::new(ErrorKind::Other, "Missing content : TODO change trait to return an option in result"))
   }
-  fn new_cache_id (&mut self) -> Vec<u8> {
-  let i = self.2;
-  self.2 = i + 1; 
-  vec!(i as u8, (i + 1) as u8, (i + 2) as u8, (i + 3) as u8)
-  }
-
 
 }
 
@@ -231,14 +302,14 @@ impl<P : Peer> SymProvider<SWrite,SRead,P> for SProv {
   // TODO peerkey at 0??
   fn new_sym_writer (&mut self, v : Vec<u8>) -> SWrite {
     let mut st = self.0.clone();
-    st.0 = v[0];
+    st.0 = 0;
     st.1 = v[0];
     SWrite(st)
   }
   // TODO peerkey at 0??
   fn new_sym_reader (&mut self, v : Vec<u8>) -> SRead {
     let mut st = self.0.clone();
-    st.0 = v[0];
+    st.0 = 0;
     st.1 = v[0];
     SRead(st)
   }
@@ -256,6 +327,7 @@ pub struct TunnelTestConfig<P:Peer> {
     pub read_buffer_length : usize,
     pub reply_mode : MultipleReplyMode,
     pub error_mode : MultipleErrorMode,
+    pub error_position : usize,
     pub test_mode : TestMode,
 }
 
@@ -355,8 +427,10 @@ impl<P : Peer> GenTunnelTraits for ReplyTraits<P> {
   >;
   type EP = NoErrorProvider;
   type TNR = TunnelNope<P>;
+  type EW = ErrorWriter;
 }
 impl<P : Peer> GenTunnelTraits for TestTunnelTraits<P> {
+  type EW = ErrorWriter;
   type P = P;
   type SSW = SWrite;
   type SSR = SRead;
@@ -380,7 +454,7 @@ impl<P : Peer> GenTunnelTraits for TestTunnelTraits<P> {
     SRead,
     SProv,
   >;
-  type EP = NoErrorProvider; // TODO
+  type EP = MulErrorProvider;
 }
 #[derive(Clone)]
 pub enum TestMode {
@@ -393,7 +467,7 @@ fn new_full_tunnel<P : Peer> (tc : &TunnelTestConfig<P>, from : &P, ixcache : us
 where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
 {
   let mut route_prov = Rp::new (tc.nbpeer,tc.route1.clone(),tc.route2.clone());
-  let mut cache : CachedInfoManager<P> = CachedInfoManager(Vec::new(),0,ixcache,Vec::new(),0);
+  let mut cache : CachedInfoManager<P> = CachedInfoManager(Vec::new(),0,ixcache,Vec::new(),0,Vec::new(),0,Vec::new(),0);
   let TunnelTestConfig {
     me : _,
     dest : dest,
@@ -405,6 +479,7 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
     read_buffer_length : read_buffer_length,
     reply_mode : reply_mode,
     error_mode : error_mode,
+    error_position : error_position,
     test_mode : test_mode,
   } = tc.clone();
 
@@ -424,7 +499,7 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
     route_prov : Nope,
     reply_prov : ReplyInfoProvider {
       mode : MultipleReplyMode::RouteReply,
-      symprov : SProv(ShadowTest (0,0, ShadowModeTest::SimpleShift)),
+      symprov : SProv(ShadowTest(0,0,ShadowModeTest::SimpleShift)),
       _p : PhantomData,
     },
     error_prov : NoErrorProvider,
@@ -438,19 +513,19 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
 
   let rip = ReplyInfoProvider {
     mode : reply_mode.clone(),
-    symprov : SProv(ShadowTest (0,0, ShadowModeTest::SimpleShift)),
+    symprov : SProv(ShadowTest(0,0,ShadowModeTest::SimpleShift)),
     _p : PhantomData,
   };
 
   Full {
     me : from.clone(),
     reply_mode : reply_mode.clone(),
-    error_mode : error_mode,
+    error_mode : error_mode.clone(),
     cache : cache,
     //  pub sym_prov : TT::SP,
     route_prov : route_prov,
     reply_prov : rip,
-    error_prov : NoErrorProvider, // TODO error p
+    error_prov : MulErrorProvider::new(error_mode.clone()).unwrap(),
     rng : thread_rng(),
     limiter_proto_w : SizedWindows::new(TestSizedWindows),
     limiter_proto_r : SizedWindows::new(TestSizedWindows),
@@ -458,8 +533,6 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
     reply_once_buf_size : 256,
     _p : PhantomData,
   }
-
-
 }
                         
  
@@ -541,6 +614,7 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
      read_buffer_length : read_buffer_length,
      reply_mode : reply_mode,
      error_mode : error_mode,
+     error_position : error_position,
      test_mode : test_mode,
  } = tc.clone();
 
@@ -598,17 +672,21 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
     for i in 1 .. nbpeer - 1 {
       let from_add = tunnels[i - 1].me.to_address();
       let to_add = tunnels[i + 1].me.to_address();
-      let tunnel = &mut tunnels[i];
-      tunn_re = tunnel.new_reader(&from_add);
-      assert!(tunn_re.is_dest() == None);
+
       let mut input_v = Cursor::new(output.into_inner());
       output = Cursor::new(Vec::new());
-      tunn_re.read_header(&mut input_v).unwrap();
-      if tunn_re.is_dest() == None {
-        tunnel.init_dest(&mut tunn_re).unwrap();
-      }
-      assert!(tunn_re.is_dest() == Some(false));
-      let (mut proxy, dest) = tunnel.new_proxy_writer(tunn_re).unwrap();
+      let (mut proxy, dest) =  { 
+        let tunnel = &mut tunnels[i];
+        tunn_re = tunnel.new_reader(&from_add);
+        assert!(tunn_re.is_dest() == None);
+        tunn_re.read_header(&mut input_v).unwrap();
+        if tunn_re.is_dest() == None {
+          tunnel.init_dest(&mut tunn_re).unwrap();
+        }
+        assert!(tunn_re.is_dest() == Some(false));
+        assert!(tunn_re.is_err() == Some(false));
+        tunnel.new_proxy_writer(tunn_re).unwrap()
+      };
       assert!(dest == to_add);
       proxy.read_header(&mut input_v).unwrap();
 
@@ -619,7 +697,7 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
  
       while  {
         let l = proxy.read_from(&mut input_v, &mut readbuf).unwrap();
-       ix = 0;
+        ix = 0;
         while ix < l {
           ix += proxy.write_into(&mut output, &mut readbuf[..l]).unwrap();
         }
@@ -629,8 +707,20 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
       } {}
       proxy.read_end(&mut input_v).unwrap();
       proxy.write_end(&mut output).unwrap();
+      if i == error_position {
+        let nbpeer = error_position + 1;
+        let mut tunn_err = &mut tunnels[0..error_position + 1];
+        tunn_err.reverse();
+        let (mut te, dest) = tunn_err[0].new_error_writer(&mut proxy.get_reader()).unwrap();
+        assert!(dest == tunn_err[1].me.to_address());
+        send_error (nbpeer, te, &mut tunn_err);
+        return;
+      }
+
       nbp += 1;
     }
+    // not for dest peer TODO add dest test : after read dest
+      // reply error
 /*if let TestMode::Reply(0) = test_mode {
   panic!("{:?}", output.into_inner());
 }*/
@@ -650,6 +740,7 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
         tunnel.init_dest(&mut tunn_re).unwrap();
       }
       assert!(tunn_re.is_dest() == Some(true));
+      assert!(tunn_re.is_err() == Some(false));
 
       dest_reader = tunnel.new_dest_reader(tunn_re, &mut input_v).unwrap();
         /* issue with CompR dropping abnormally : commenting for now
@@ -707,6 +798,56 @@ where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
         },
       }
         
+
+}
+fn send_error<P : Peer, EW : TunnelErrorWriter> (nbpeer : usize, mut tunn_e : EW, 
+                         mut tunnels : &mut [Full<TestTunnelTraits<P>>])
+where <<P as Peer>::Shadow as Shadow>::ShadowMode : Eq
+{
+
+ let mut output = Cursor::new(Vec::new());
+ tunn_e.write_error(&mut output).unwrap();
+   
+ let mut tunn_re;
+ let mut input_v;
+    let nbtoprox = if nbpeer > 2 {nbpeer - 2} else {0};
+    let mut nbp = 0;
+    for i in 1 .. nbpeer - 1 {
+      let from_add = tunnels[i - 1].me.to_address();
+      let to_add = tunnels[i + 1].me.to_address();
+      let tunnel = &mut tunnels[i];
+      tunn_re = tunnel.new_reader(&from_add);
+      assert!(tunn_re.is_dest() == None);
+      assert!(tunn_re.is_err() == None);
+      input_v = Cursor::new(output.into_inner());
+      output = Cursor::new(Vec::new());
+      tunn_re.read_header(&mut input_v).unwrap();
+      if tunn_re.is_dest() == None {
+        tunnel.init_dest(&mut tunn_re).unwrap();
+      }
+      assert!(tunn_re.is_dest() == Some(false));
+      assert!(tunn_re.is_err() == Some(true));
+      let (mut proxy, dest) = tunnel.proxy_error_writer(&mut tunn_re).unwrap();
+      assert!(dest == to_add);
+      proxy.write_error(&mut output).unwrap();
+      nbp += 1;
+    }
+
+    assert!(nbtoprox == nbp);
+      let from_add = tunnels[nbpeer - 2].me.to_address();
+      let tunnel = &mut tunnels[nbpeer - 1];
+      tunn_re = tunnel.new_reader(&from_add);
+      input_v = Cursor::new(output.into_inner());
+      tunn_re.read_header(&mut input_v).unwrap();
+      if tunn_re.is_dest() == None {
+        tunnel.init_dest(&mut tunn_re).unwrap();
+      }
+      assert!(tunn_re.is_dest() == Some(true));
+      assert!(tunn_re.is_err() == Some(true));
+
+      let err_ix = tunnel.read_error(&mut tunn_re).unwrap();
+      assert!(err_ix != 0);
+      assert!(err_ix == nbpeer - 1);
 
 }
  
@@ -794,6 +935,7 @@ PeerTest {
 #[inline]
 fn test_peer_mode() -> ShadowModeTest {
   ShadowModeTest::SimpleShift
+//  ShadowModeTest::SimpleShiftNoHead
 //  ShadowModeTest::NoShadow
 }
 
@@ -814,11 +956,25 @@ fn tunnel_nohop_reptunnel_1_c() {
 fn tunnel_nohop_reptunnel_2_c() {
   tunnel_testpeer_test(3, MultipleReplyMode::CachedRoute, MultipleErrorMode::NoHandling, 500, 360, 130, TestMode::Reply(1));
 }
+
+#[test]
+fn tunnel_nohop_reptunnel_2_c_err() {
+  tunnel_testpeer_test_err(3, MultipleReplyMode::CachedRoute, MultipleErrorMode::CachedRoute, 500, 360, 130, TestMode::Reply(1),1);
+}
+
 #[test]
 fn tunnel_nohop_reptunnel_3_c() {
   tunnel_testpeer_test(6, MultipleReplyMode::CachedRoute, MultipleErrorMode::NoHandling, 500, 360, 130, TestMode::Reply(1));
 }
+#[test]
+fn tunnel_nohop_reptunnel_3_c_err() {
+  tunnel_testpeer_test_err(6, MultipleReplyMode::CachedRoute, MultipleErrorMode::CachedRoute, 500, 360, 130, TestMode::Reply(1),4);
+}
 
+#[test]
+fn tunnel_nohop_reptunnel_3_c_ne() {
+  tunnel_testpeer_test(6, MultipleReplyMode::CachedRoute, MultipleErrorMode::CachedRoute, 500, 360, 130, TestMode::Reply(1));
+}
 
 
 #[test]
@@ -835,13 +991,15 @@ fn tunnel_nohop_reptunnel_1() {
 fn tunnel_nohop_reptunnel_2() {
   tunnel_testpeer_test(3, MultipleReplyMode::OtherRoute, MultipleErrorMode::NoHandling, 500, 360, 130, TestMode::Reply(1));
 }
-
 #[test]
 fn tunnel_nohop_reptunnel_3() {
   tunnel_testpeer_test(6, MultipleReplyMode::OtherRoute, MultipleErrorMode::NoHandling, 500, 360, 130, TestMode::Reply(1));
 }
 
-
+#[test]
+fn tunnel_nohop_reptunnel_3_bis() {
+  tunnel_testpeer_test(6, MultipleReplyMode::Route, MultipleErrorMode::NoHandling, 500, 360, 130, TestMode::Reply(1));
+}
 
 #[test]
 fn tunnel_nohop_noreptunnel_2() {
@@ -854,7 +1012,10 @@ fn tunnel_nohop_noreptunnel_3() {
 }
 
 
-pub fn tunnel_testpeer_test(nbpeer : usize, replymode : MultipleReplyMode, errormode : MultipleErrorMode,  input_length : usize, write_buffer_length : usize, read_buffer_length : usize, test_mode : TestMode) {
+pub fn tunnel_testpeer_test(nbpeer : usize, replymode : MultipleReplyMode, errormode : MultipleErrorMode, input_length : usize, write_buffer_length : usize, read_buffer_length : usize, test_mode : TestMode) {
+  tunnel_testpeer_test_err(nbpeer, replymode, errormode, input_length, write_buffer_length, read_buffer_length, test_mode, 0);
+}
+pub fn tunnel_testpeer_test_err(nbpeer : usize, replymode : MultipleReplyMode, errormode : MultipleErrorMode,  input_length : usize, write_buffer_length : usize, read_buffer_length : usize, test_mode : TestMode, err_position : usize) {
   let r = peer_tests();
   let tc = TunnelTestConfig {
     me : r[0].clone(),
@@ -867,6 +1028,7 @@ pub fn tunnel_testpeer_test(nbpeer : usize, replymode : MultipleReplyMode, error
     read_buffer_length : read_buffer_length,
     reply_mode : replymode,
     error_mode : errormode,
+    error_position : err_position,
     test_mode : test_mode,
   };
   tunnel_test(tc); 

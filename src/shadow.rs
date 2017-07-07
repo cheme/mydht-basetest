@@ -78,6 +78,7 @@ impl ShadowTest {
   pub fn shadow_simkey() -> Vec<u8> {
     let mut res = vec![0;1];
     thread_rng().fill_bytes(&mut res);
+//    res[0]=5;
     res
   }
 }
@@ -87,6 +88,7 @@ impl ShadowBase for ShadowTest {
 }
 
 impl ShadowSim for ShadowTest {
+
   fn send_shadow_simkey<W : Write>(&self, w : &mut W ) -> IoResult<()> {
     let k = vec!(self.0);
     try!(w.write(&k[..]));
@@ -99,12 +101,10 @@ impl ShadowSim for ShadowTest {
         Ok(ShadowTest(b[0],b[0],ShadowModeTest::SimpleShiftNoHead))
   }
 
-
 }
 
 
 impl Shadow for ShadowTest {
-
 
   type ShadowMode = ShadowModeTest;
 
@@ -123,9 +123,6 @@ impl Shadow for ShadowTest {
     let shift = Self::shadow_simkey();
     Ok(ShadowTest(shift[0], shift[0], ShadowModeTest::SimpleShiftNoHead))
   }
- 
-
-
 
 }
 impl ExtWrite for ShadowTest {
@@ -138,7 +135,7 @@ impl ExtWrite for ShadowTest {
       },
       ShadowModeTest::SimpleShift => {
         self.1 = (Self::shadow_simkey())[0];
-        try!(w.write(&[1,shift_up(self.1,self.0)]));
+        try!(w.write(&[1,self.1]));
       },
       ShadowModeTest::SimpleShiftNoHead => {
         try!(w.write(&[2]));
@@ -156,7 +153,7 @@ impl ExtWrite for ShadowTest {
       },
       ShadowModeTest::SimpleShiftNoHead => vec!(self.0),
     };
-
+    //    panic!("{:?},{:?},{:?}",k, self.0, self.1);
     self.shadow_iter_sim(&k[..], cont, w)
   }
 
@@ -174,12 +171,10 @@ impl ExtRead for ShadowTest {
     let sm : u8 = buf[0];
     let mode = if sm == 0 {
       ShadowModeTest::NoShadow
-    }else if sm == 1 {
-      
-    let nb = try!(r.read(buf));
-    assert!(nb == 1);
-    let key : u8 = shift_down(buf[0],self.0);
-    self.1 = key;
+    } else if sm == 1 {
+      let nb = try!(r.read(buf));
+      assert!(nb == 1);
+      self.1 = buf[0];
       ShadowModeTest::SimpleShift
     } else if sm == 2 {
       ShadowModeTest::SimpleShiftNoHead
