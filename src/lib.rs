@@ -22,7 +22,5 @@ pub mod local_transport;
 pub mod transport;
 pub mod peer;
 pub mod shadow;
-//pub mod tunnel;
-pub mod tunnel_new;
 pub mod bytes_wr;
 
