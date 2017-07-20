@@ -37,8 +37,8 @@ impl SettableAttachment for Node { }
 
 impl Peer for Node {
   type Address = SerSocketAddr;
-  fn to_address(&self) -> SerSocketAddr {
-    self.address.clone()
+  fn get_address(&self) -> &SerSocketAddr {
+    &self.address
   }
   noshadow!();
 }

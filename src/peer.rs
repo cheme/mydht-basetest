@@ -48,9 +48,10 @@ impl SettableAttachment for PeerTest { }
 impl Peer for PeerTest {
   type Address = LocalAdd;
   type Shadow = ShadowTest;
-  fn to_address(&self) -> Self::Address {
-    self.address.clone()
+  fn get_address(&self) -> &Self::Address {
+    &self.address
   }
+
   #[inline]
   fn get_shadower (&self, _ : bool) -> Self::Shadow {
     ShadowTest(self.keyshift,0,self.modesh.clone()) // default to no shadow

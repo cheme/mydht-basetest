@@ -44,8 +44,8 @@ impl KeyVal for NodeK2 {
     type Address = <Node as Peer>::Address;
     type Shadow = <Node as Peer>::Shadow;
     #[inline]
-    fn to_address(&self) -> <Node as Peer>::Address {
-      self.0.to_address()
+    fn get_address(&self) -> &<Node as Peer>::Address {
+      self.0.get_address()
     }
     #[inline]
     fn get_shadower (&self, write : bool) -> Self::Shadow {
